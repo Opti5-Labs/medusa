@@ -5,25 +5,42 @@ Change limits here, nowhere else.
 
 import os
 
+from dotenv import load_dotenv
+
+# Load backend/.env (or the nearest .env up the tree) so that os.getenv picks
+# up local overrides. This is a no-op when the file is absent (deployed env
+# vars come from the systemd unit / shell environment instead).
+load_dotenv()
+
 # ── Origins ────────────────────────────────────────────────────────────────────
 ALLOWED_ORIGIN: str = os.getenv("ALLOWED_ORIGIN", "http://localhost:3000")
 
 # ── Ingest limits ──────────────────────────────────────────────────────────────
-MAX_ZIP_SIZE_BYTES: int = 20 * 1024 * 1024          # 20 MB
-MAX_ZIP_FILES: int = 2_000
-MAX_GITHUB_REPO_SIZE_KB: int = 50 * 1024            # 50 MB expressed in KB (GitHub API unit)
+# Public defaults are intentionally conservative. Override locally via .env only
+# (never commit .env). Suggested local values are documented in .env.example.
+MAX_ZIP_SIZE_BYTES: int = int(
+    os.getenv("MAX_ZIP_SIZE_BYTES", str(20 * 1024 * 1024))  # default 20 MB
+)
+MAX_ZIP_FILES: int = int(os.getenv("MAX_ZIP_FILES", "2000"))
+MAX_UNCOMPRESSED_BYTES: int = int(
+    os.getenv("MAX_UNCOMPRESSED_BYTES", str(200 * 1024 * 1024))  # default 200 MB
+)
+# GitHub API reports repo size in KB; default cap is 50 MB expressed in KB.
+MAX_GITHUB_REPO_SIZE_KB: int = int(
+    os.getenv("MAX_GITHUB_REPO_SIZE_KB", str(50 * 1024))  # default 50 MB
+)
 
 # ── Scan limits ────────────────────────────────────────────────────────────────
-SCAN_MAX_FILES: int = 40
-SCAN_MAX_LINES: int = 6_000
+SCAN_MAX_FILES: int = int(os.getenv("SCAN_MAX_FILES", "40"))
+SCAN_MAX_LINES: int = int(os.getenv("SCAN_MAX_LINES", "6000"))
 
 # ── Rate limits (per IP) ───────────────────────────────────────────────────────
 RATE_SCANS_PER_WINDOW: int = 5
 RATE_REPRO_DEBUG_PER_WINDOW: int = 3
-RATE_WINDOW_SECONDS: int = 600                      # 10 minutes
+RATE_WINDOW_SECONDS: int = 600  # 10 minutes
 
 # ── Timeouts ───────────────────────────────────────────────────────────────────
-SCAN_TIMEOUT_S: int = 90
+SCAN_TIMEOUT_S: int = int(os.getenv("SCAN_TIMEOUT_S", "90"))
 SANDBOX_TIMEOUT_S: int = 90
 GRANITE_TIMEOUT_S: int = 30
 GRANITE_RETRIES: int = 1
@@ -45,7 +62,7 @@ GRANITE_MODEL_ID: str = os.getenv("GRANITE_MODEL_ID", "")
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
 # ── Bob ────────────────────────────────────────────────────────────────────────
-BOB_MODE: str = os.getenv("BOB_MODE", "replay")     # "replay" | "live"
+BOB_MODE: str = os.getenv("BOB_MODE", "replay")  # "replay" | "live"
 
 # ── In-memory store TTL ────────────────────────────────────────────────────────
-RUN_TTL_SECONDS: int = 1800                         # 30 minutes
+RUN_TTL_SECONDS: int = 1800  # 30 minutes

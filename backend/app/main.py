@@ -1,110 +1,79 @@
 """
 FastAPI application entry point.
 
-Routers are registered here. CORS is enabled for the frontend origin read from
-the ALLOWED_ORIGIN environment variable (see app/config.py).
-
-All routes are stub implementations — real logic lives in app/api/*.
+Registers routers, CORS, and global exception handlers.
+All business logic lives in app/api/*.
 """
 
+import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from app.api import health as health_router
+from app.api import scan as scan_router
 from app.config import ALLOWED_ORIGIN
+from app.errors import MedusaError, medusa_error_handler
 from app.models.contracts import (
     DebugSession,
     FixAttempt,
-    Issue,
     LogEvent,
-    ReproAttempt,
     Recommendation,
-    ScanResult,
+    ReproAttempt,
 )
+from app.store import RunStore
 
-app = FastAPI(title="Medusa", version="0.1.0")
+log = logging.getLogger(__name__)
+
+# ── Application store (singleton) ──────────────────────────────────────────────
+
+store = RunStore()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    store.start()
+    scan_router.set_store(store)
+    log.info("Medusa started — store TTL sweeper running")
+    yield
+    await store.stop()
+    log.info("Medusa stopped")
+
+
+# ── App ───────────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Medusa", version="0.1.0", lifespan=lifespan)
+
+# ── Exception handlers ─────────────────────────────────────────────────────────
+
+app.add_exception_handler(MedusaError, medusa_error_handler)  # type: ignore[arg-type]
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[ALLOWED_ORIGIN],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,  # no cookies used
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
-# ── Health ─────────────────────────────────────────────────────────────────────
+# ── Routers ───────────────────────────────────────────────────────────────────
+
+app.include_router(health_router.router)
+app.include_router(scan_router.router)
 
 
-@app.get("/api/health")
-async def health() -> dict:
-    return {"ok": True}
-
-
-# ── Scan ───────────────────────────────────────────────────────────────────────
-
-
-@app.post("/api/scan", response_model=ScanResult)
-async def scan(body: dict) -> ScanResult:
-    """
-    Stub — Person 2 implements the real scan pipeline.
-
-    Accepts: {"source": "demo" | "github", "repo_url"?: str}
-    Returns: ScanResult with placeholder data.
-    """
-    return ScanResult(
-        scan_id=str(uuid.uuid4()),
-        repo_source=body.get("source", "demo"),
-        language="python",
-        files_scanned=[],
-        files_total=0,
-        issues=[
-            Issue(
-                id=str(uuid.uuid4()),
-                title="Placeholder issue",
-                description="Stub scan result — real pipeline not yet implemented.",
-                priority="Medium",
-                source="scan",
-            )
-        ],
-        warnings=["Stub response — scan pipeline not implemented yet."],
-    )
-
-
-@app.post("/api/scan/upload", response_model=ScanResult)
-async def scan_upload(file: UploadFile) -> ScanResult:
-    """
-    Stub — Person 2 implements zip ingest and scan.
-
-    Accepts: multipart form with a 'file' field (zip).
-    Returns: ScanResult with placeholder data.
-    """
-    return ScanResult(
-        scan_id=str(uuid.uuid4()),
-        repo_source="zip",
-        language="unknown",
-        files_scanned=[],
-        files_total=0,
-        issues=[],
-        warnings=["Stub response — zip scan pipeline not implemented yet."],
-    )
-
-
-# ── Reproduce ─────────────────────────────────────────────────────────────────
+# ── Stub routes for pipelines not yet built (Person 1/2) ─────────────────────
+# These keep the frontend stubs working without changes.
 
 
 @app.post("/api/issues/{issue_id}/repro", response_model=ReproAttempt)
 async def start_repro(issue_id: str) -> ReproAttempt:
-    """
-    Stub — Person 1 (sandbox) and Person 2 (reasoning) implement the real pipeline.
-
-    Returns a ReproAttempt with status="running".
-    The client then opens GET /api/repro/{attempt_id}/events to stream progress.
-    """
     return ReproAttempt(
         attempt_id=str(uuid.uuid4()),
         issue_id=issue_id,
@@ -116,29 +85,21 @@ async def start_repro(issue_id: str) -> ReproAttempt:
 
 @app.get("/api/repro/{attempt_id}/events")
 async def repro_events(attempt_id: str) -> StreamingResponse:
-    """
-    Stub SSE stream for a ReproAttempt.
-
-    Emits a few placeholder LogEvent lines then a 'done' event
-    carrying the final ReproAttempt JSON.
-    Person 1/2 replaces this with real log streaming.
-    """
-
     async def event_stream():
-        stub_events = [
-            LogEvent(ts=time.time(), source="stub", level="info", message="Repro stub started."),
-            LogEvent(ts=time.time(), source="stub", level="info", message="(placeholder — real pipeline not implemented)"),
-            LogEvent(ts=time.time(), source="stub", level="result", message="Stub complete."),
-        ]
-        for event in stub_events:
-            yield f"event: log\ndata: {event.model_dump_json()}\n\n"
-
+        for msg in (
+            "Repro stub started.",
+            "(placeholder — real pipeline not implemented)",
+            "Stub complete.",
+        ):
+            level = "result" if "complete" in msg else "info"
+            ev = LogEvent(ts=time.time(), source="stub", level=level, message=msg)
+            yield f"event: log\ndata: {ev.model_dump_json()}\n\n"
         final = ReproAttempt(
             attempt_id=attempt_id,
             issue_id="unknown",
             mode="reasoning",
             status="plausible",
-            log=stub_events,
+            log=[],
             confidence=0.0,
         )
         yield f"event: done\ndata: {final.model_dump_json()}\n\n"
@@ -146,18 +107,9 @@ async def repro_events(attempt_id: str) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-# ── Debug ─────────────────────────────────────────────────────────────────────
-
-
 @app.post("/api/issues/{issue_id}/debug", response_model=DebugSession)
 async def start_debug(issue_id: str, body: dict) -> DebugSession:
-    """
-    Stub — Person 1 (sandbox) and Person 2 (reasoning) implement the real pipeline.
-
-    Accepts: {"candidates": 2..6}
-    Returns a DebugSession with status="running" candidates.
-    """
-    n = int(body.get("candidates", 2))
+    n = max(2, min(6, int(body.get("candidates", 2))))
     candidates = [
         FixAttempt(
             candidate_id=f"c{i + 1}",
@@ -177,22 +129,16 @@ async def start_debug(issue_id: str, body: dict) -> DebugSession:
 
 @app.get("/api/debug/{session_id}/events")
 async def debug_events(session_id: str) -> StreamingResponse:
-    """
-    Stub SSE stream for a DebugSession.
-
-    Emits placeholder LogEvents then a 'done' event with the final
-    DebugSession + Recommendation JSON.
-    Person 1/2 replaces this with real candidate log streaming.
-    """
-
     async def event_stream():
-        stub_events = [
-            LogEvent(ts=time.time(), source="candidate:c1", level="info", message="Debug stub started."),
-            LogEvent(ts=time.time(), source="candidate:c1", level="result", message="Stub complete."),
-        ]
-        for event in stub_events:
-            yield f"event: log\ndata: {event.model_dump_json()}\n\n"
+        import json
 
+        ev = LogEvent(
+            ts=time.time(),
+            source="candidate:c1",
+            level="info",
+            message="Debug stub started.",
+        )
+        yield f"event: log\ndata: {ev.model_dump_json()}\n\n"
         session = DebugSession(
             session_id=session_id,
             issue_id="unknown",
@@ -214,7 +160,6 @@ async def debug_events(session_id: str) -> StreamingResponse:
             "session": session.model_dump(),
             "recommendation": recommendation.model_dump(),
         }
-        import json
         yield f"event: done\ndata: {json.dumps(payload)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -222,8 +167,6 @@ async def debug_events(session_id: str) -> StreamingResponse:
 
 @app.get("/api/debug/{session_id}/download")
 async def debug_download(session_id: str, candidate_id: str):
-    """
-    Stub — returns a plain 501 until Person 2 implements zip assembly.
-    """
     from fastapi import HTTPException
+
     raise HTTPException(status_code=501, detail="Download not implemented yet.")

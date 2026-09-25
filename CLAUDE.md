@@ -9,7 +9,7 @@ Full plan, timeline and team split: see `PROJECT.md`.
 It scans a codebase for issues, reproduces them, and proposes and tests fixes.
 
 - Submission deadline: **Sun 27 Sep 2026, 15:00 UTC (20:30 Colombo)**
-- Stack: React + Vite + TypeScript frontend, FastAPI (Python 3.11+) backend, Docker sandbox, Granite on watsonx.ai, IBM Bob, hosted on a single AWS EC2 instance.
+- Stack: Next.js 14 (App Router) + TypeScript frontend, FastAPI (Python 3.11+) backend, Docker sandbox, Granite on watsonx.ai, IBM Bob, hosted on a single AWS EC2 instance.
 
 Two paths through the product:
 
@@ -24,7 +24,7 @@ Two paths through the product:
 2. **Only one place runs code:** `backend/app/sandbox/runner.py`, and only for the OptiLearn image. Never call `subprocess`, `os.system`, `exec`, `eval`, `pip install`, `npm install`, or Docker on anything from a linked repo or uploaded zip. General-repo code is read as text, nothing more.
 3. **No secrets anywhere in the repo.** Not in code, tests, fixtures, logs, prompts, or golden-run files. All config comes from env vars loaded from `.env` (gitignored). An exposed IBM credential gets the hackathon account deactivated.
 4. **Sandbox containers get zero credentials.** Never pass `os.environ` or any `environment=` containing keys to a container.
-5. **Contracts stay in sync.** `backend/app/models/contracts.py` and `frontend/src/api/types.ts` describe the same shapes. Change one, change the other in the same commit.
+5. **Contracts stay in sync.** `backend/app/models/contracts.py` and `frontend/lib/api.ts` describe the same shapes. Change one, change the other in the same commit.
 6. **Banned watsonx models:** `llama-3-405b-instruct`, `mistral-medium-2505`, `mistral-small-3-1-24b-instruct-2503`. The model id always comes from `GRANITE_MODEL_ID`.
 7. **No real personal, client, company, or social-media data** in fixtures, sample repos, or demo content.
 8. **Be honest in the UI.** Reasoning-mode results are never labelled as reproduced or tested. Replayed Bob output is labelled as a recorded session.
@@ -56,26 +56,29 @@ Nothing persists between sessions. Run state lives in an in-memory store plus a 
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                # FastAPI app, routers, CORS, rate limiting
-│   │   ├── config.py              # env loading + all limits as constants
+│   │   ├── config.py              # env loading (load_dotenv) + all limits as constants
 │   │   ├── store.py               # in-memory run store with TTL cleanup
-│   │   ├── api/                   # scan.py, repro.py, debug.py, download.py, health.py
+│   │   ├── errors.py              # MedusaError + global handler
+│   │   ├── ratelimit.py           # per-IP sliding-window rate limiter
+│   │   ├── api/                   # scan.py, health.py (repro/debug are stubs in main.py)
 │   │   ├── models/contracts.py    # Pydantic data contracts (source of truth)
-│   │   ├── ingest/                # github.py (tarball), zipfile.py (safe extract), limits.py
-│   │   ├── pipelines/             # scan.py, repro.py, debug.py, recommend.py
-│   │   ├── agents/                # granite.py (watsonx client), bob.py (replay | live)
-│   │   ├── github/issues.py       # read-only Issues fetch
-│   │   └── sandbox/runner.py      # the only code-execution entry point
-│   ├── prompts/                   # all prompts as .md files, never inline strings
-│   ├── golden/optilearn/          # recorded Bob run (JSONL), no secrets
+│   │   ├── ingest/                # github.py, zip_upload.py, safe_extract.py, limits.py
+│   │   ├── pipelines/scan.py      # file selection + language detection (Granite pending)
+│   │   ├── demo/                  # pre-baked OptiLearn result loader
+│   │   └── github/issues.py       # read-only GitHub Issues fetch
 │   ├── tests/
 │   └── requirements.txt
 ├── sandbox/
-│   └── optilearn/Dockerfile       # OptiLearn + its deps baked in at build time
+│   └── optilearn/Dockerfile       # OptiLearn + its deps baked in at build time (not built yet)
 ├── frontend/
-│   ├── src/
-│   │   ├── api/                   # client.ts (fetch + EventSource), types.ts (mirrors contracts)
-│   │   ├── pages/                 # Landing.tsx, Issues.tsx
-│   │   └── components/            # IssueRow, ReproPanel, DebugPanels, CandidatePanel, LogStream
+│   ├── app/                       # Next.js 14 App Router
+│   │   ├── page.tsx               # Landing (Home)
+│   │   ├── layout.tsx
+│   │   ├── issues/page.tsx        # Issue list (shows "files selected" until Granite runs)
+│   │   ├── scan/github/page.tsx   # GitHub link form
+│   │   ├── scan/upload/page.tsx   # Zip upload form (limit read from NEXT_PUBLIC_MAX_ZIP_MB)
+│   │   └── components/            # shared UI components
+│   ├── lib/api.ts                 # fetch wrapper + typed contracts (mirrors contracts.py)
 │   └── package.json
 └── deploy/
     ├── nginx.conf
@@ -100,8 +103,8 @@ docker build -t Medusa-optilearn:latest sandbox/optilearn
 # Frontend
 cd frontend
 npm install
-npm run dev                          # Vite dev server, proxies /api to :8000
-npm run build                        # outputs frontend/dist for nginx
+npm run dev                          # Next.js dev server (port 3000)
+npm run build                        # outputs frontend/.next for nginx (next start) or static export
 ```
 
 ## Environment variables
