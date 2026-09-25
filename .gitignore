@@ -53,6 +53,12 @@ coverage/
 .coverage
 htmlcov/
 
+# Next.js generated files (not source)
+frontend/tsconfig.tsbuildinfo
+frontend/next-env.d.ts
+
 # Misc
 .bob/
-CLAUDE.md
+
+# Local Bob Shell installer
+install_bob.ps1

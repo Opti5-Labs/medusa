@@ -13,13 +13,26 @@ async function request<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
+  // Only set JSON content-type when the body is NOT FormData
+  // (FormData needs the boundary that the browser sets automatically)
+  const isFormData = init?.body instanceof FormData;
+  const headers: HeadersInit = isFormData
+    ? { ...init?.headers }
+    : { "Content-Type": "application/json", ...init?.headers };
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
+    headers,
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(text || `HTTP ${res.status}`);
+    let detail: string | undefined;
+    try {
+      const json = await res.json();
+      detail = json?.detail ?? JSON.stringify(json);
+    } catch {
+      detail = await res.text().catch(() => res.statusText);
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -96,19 +109,19 @@ export const getHealth = () =>
   request<{ ok: boolean }>("/api/health");
 
 /** POST /api/scan  — demo or GitHub URL */
-export const postScan = (body: {
-  source: "demo" | "github";
-  repo_url?: string;
-}) => request<ScanResult>("/api/scan", { method: "POST", body: JSON.stringify(body) });
+export const postScan = (
+  body: { source: "demo" | "github"; repo_url?: string },
+  signal?: AbortSignal
+) => request<ScanResult>("/api/scan", { method: "POST", body: JSON.stringify(body), signal });
 
 /** POST /api/scan/upload  — multipart zip */
-export const postScanUpload = (file: File) => {
+export const postScanUpload = (file: File, signal?: AbortSignal) => {
   const form = new FormData();
   form.append("file", file);
   return request<ScanResult>("/api/scan/upload", {
     method: "POST",
-    headers: {},          // let browser set Content-Type with boundary
     body: form,
+    signal,
   });
 };
 

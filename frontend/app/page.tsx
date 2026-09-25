@@ -1,4 +1,5 @@
 import Link from "next/link";
+import DemoButton from "./components/DemoButton";
 
 export default function Home() {
   return (
@@ -10,14 +11,9 @@ export default function Home() {
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-4">
-        {/* Run the demo — uses the built-in OptiLearn demo repo */}
-        <Link
-          href="/issues?source=demo"
-          className="px-6 py-3 rounded-lg bg-gray-900 text-white dark:bg-white dark:text-gray-900 font-medium text-center hover:opacity-90 transition-opacity"
-        >
-          Run the demo
-        </Link>
+      <div className="flex flex-col sm:flex-row gap-4 items-center">
+        {/* Run the demo — client component, calls POST /api/scan */}
+        <DemoButton />
 
         {/* Link a GitHub repository */}
         <Link

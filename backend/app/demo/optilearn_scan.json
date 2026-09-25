@@ -1,0 +1,50 @@
+{
+  "repo_source": "demo",
+  "language": "Python",
+  "files_scanned": [
+    "optilearn/train.py",
+    "optilearn/model.py",
+    "optilearn/data_loader.py",
+    "optilearn/evaluate.py"
+  ],
+  "files_total": 12,
+  "issues": [
+    {
+      "id": "__PLACEHOLDER__",
+      "title": "Learning rate not validated before use",
+      "description": "The learning rate parameter is read from config but never validated. A zero or negative value will cause the optimiser to produce NaN gradients silently.",
+      "priority": "High",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/train.py",
+      "function": "build_optimizer",
+      "github_url": null
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "title": "Dataset path constructed with string concatenation",
+      "description": "User-supplied dataset path is concatenated with os.getcwd() using '+', which can produce an invalid path if the input contains a leading slash. Use pathlib.Path or os.path.join.",
+      "priority": "Medium",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/data_loader.py",
+      "function": "load_dataset",
+      "github_url": null
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "title": "Evaluation metric logged but never persisted",
+      "description": "Accuracy and loss are printed to stdout but not written to any file or metrics store. Results cannot be reproduced or compared across runs.",
+      "priority": "Low",
+      "source": "scan",
+      "category": "maintainability",
+      "file": "optilearn/evaluate.py",
+      "function": "run_evaluation",
+      "github_url": null
+    }
+  ],
+  "warnings": [
+    "This is the built-in OptiLearn demo. Results are pre-recorded — no live analysis was performed.",
+    "Reproduce and Debug actions run inside an isolated sandbox (OptiLearn path only)."
+  ]
+}
