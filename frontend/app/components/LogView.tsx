@@ -61,7 +61,7 @@ export default function LogView({ events, showSource = true, emptyText = "Waitin
       }}
       role="log"
       aria-live="polite"
-      className={`${maxHeight} overflow-y-auto rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 font-mono text-xs leading-relaxed`}
+      className={`${maxHeight} log-view`}
     >
       <div>
       {events.length === 0 ? (

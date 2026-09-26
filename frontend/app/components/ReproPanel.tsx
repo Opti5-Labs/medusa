@@ -31,37 +31,37 @@ function InvestigatorCard({ report }: { report: InvestigatorReport }) {
   const name = report.investigator === "bob" ? "IBM Bob" : "Granite";
   const status = REPORT_STATUS[report.status];
   return (
-    <div className="rounded-md border border-gray-200 dark:border-gray-800 p-3 text-sm space-y-1 min-w-0">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-medium">{name}</span>
+    <div className="inset-card">
+      <div className="badges">
+        <span className="inset-card-title">{name}</span>
         <Badge tone={status.tone}>{status.label}</Badge>
         {report.recorded && <Badge tone="violet">Recorded session</Badge>}
       </div>
-      {report.root_cause && <p className="text-gray-700 dark:text-gray-300">{report.root_cause}</p>}
-      {report.error && <p className="text-red-600 dark:text-red-400 break-words">{report.error}</p>}
+      {report.root_cause && <p className="panel-text">{report.root_cause}</p>}
+      {report.error && <p className="field-error">{report.error}</p>}
       {report.trigger_conditions && (
-        <p className="text-xs text-gray-600 dark:text-gray-400">
-          <span className="font-medium">Triggers when:</span> {report.trigger_conditions}
+        <p className="panel-small">
+          <span className="panel-small-label">Triggers when:</span> {report.trigger_conditions}
         </p>
       )}
       {report.execution_trace.length > 0 && (
-        <ol className="text-xs text-gray-600 dark:text-gray-400 list-decimal list-inside space-y-0.5">
+        <ol className="panel-list panel-list-numbered">
           {report.execution_trace.map((step, i) => (
-            <li key={i} className="font-mono break-words">{step}</li>
+            <li key={i} className="code-ref">{step}</li>
           ))}
         </ol>
       )}
       {report.evidence.length > 0 && (
-        <ul className="text-xs text-gray-600 dark:text-gray-400 list-disc list-inside space-y-0.5">
+        <ul className="panel-list">
           {report.evidence.map((item, i) => (
-            <li key={i} className="font-mono break-words">{item}</li>
+            <li key={i} className="code-ref">{item}</li>
           ))}
         </ul>
       )}
-      <p className="text-xs text-gray-500">
-        {report.confidence !== null && <>Self-reported confidence {Math.round(report.confidence * 100)}% (not used to pick a fix)</>}
-        {report.proposed_fixes > 0 && <span className="ml-3">{report.proposed_fixes} proposed fix(es)</span>}
-        {report.cost !== null && <span className="ml-3">{report.cost} Bobcoins</span>}
+      <p className="panel-meta">
+        {report.confidence !== null && <span>Self-reported confidence {Math.round(report.confidence * 100)}% (not used to pick a fix)</span>}
+        {report.proposed_fixes > 0 && <span>{report.proposed_fixes} proposed fix(es)</span>}
+        {report.cost !== null && <span>{report.cost} Bobcoins</span>}
       </p>
     </div>
   );
@@ -95,11 +95,11 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
   const elapsed = finished ? elapsedSeconds(log) : null;
 
   return (
-    <section className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-semibold mr-1">Reproduce</h3>
+    <section className="card panel-card">
+      <div className="badges">
+        <h3 className="headline panel-heading-title">Reproduce</h3>
         <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
-        {elapsed !== null && <span className="text-xs text-gray-500">({elapsed}s)</span>}
+        {elapsed !== null && <span className="panel-meta">{elapsed}s</span>}
         {investigators && <Badge tone={investigators.tone}>{investigators.label}</Badge>}
         <Badge tone={mode === "sandboxed" ? "green" : "amber"}>
           {mode === "sandboxed" ? "Runs in isolated sandbox" : "Analysis only, not executed"}
@@ -107,7 +107,7 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
       </div>
 
       {finished && attempt.root_cause && (
-        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 border-l-2 border-gray-300 dark:border-gray-700 pl-3">
+        <p className="panel-summary">
           {firstSentence(attempt.root_cause)}
         </p>
       )}
@@ -115,13 +115,13 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
       <LogView events={log} />
 
       {error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="alert">
           {error}
         </p>
       )}
 
       {finished && attempt.investigators.length > 0 && (
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="inset-grid">
           {attempt.investigators.map((r) => (
             <InvestigatorCard key={r.investigator} report={r} />
           ))}
@@ -129,8 +129,8 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
       )}
 
       {finished && attempt.root_cause && attempt.investigators.every((r) => r.status !== "ok") && (
-        <div className="rounded-md bg-gray-50 dark:bg-gray-900 p-3 text-sm space-y-1">
-          <p className="font-medium">
+        <div className="inset-card">
+          <p className="inset-card-title">
             {attempt.status === "not_reproducible"
               ? "Result"
               : attempt.investigator_source === "unavailable"
@@ -139,9 +139,9 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
                   ? "Root cause"
                   : "Likely root cause"}
           </p>
-          <p className="text-gray-700 dark:text-gray-300">{attempt.root_cause}</p>
+          <p className="panel-text">{attempt.root_cause}</p>
           {attempt.confidence !== null && (
-            <p className="text-xs text-gray-500">
+            <p className="panel-meta">
               Confidence {Math.round(attempt.confidence * 100)}% — model estimate from reading the code; nothing was run.
             </p>
           )}

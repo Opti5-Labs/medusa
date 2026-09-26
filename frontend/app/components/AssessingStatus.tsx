@@ -27,7 +27,7 @@ export default function AssessingStatus({ steps, stepMs = 900, note }: Props) {
     <div
       role="status"
       aria-live="polite"
-      className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4 space-y-2"
+      className="progress-card"
     >
       {steps.map((step, i) => {
         const done = i < current;
@@ -38,7 +38,7 @@ export default function AssessingStatus({ steps, stepMs = 900, note }: Props) {
               {done ? (
                 <span className="inline-block h-3 w-3 rounded-full bg-green-600 dark:bg-green-400 align-middle" />
               ) : active ? (
-                <span className="inline-block h-3 w-3 rounded-full border-2 border-verdigris-600 border-t-transparent animate-spin align-middle" />
+                <span className="holo-spinner" />
               ) : (
                 <span className="inline-block h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-700 align-middle" />
               )}

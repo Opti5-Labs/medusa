@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useState, useRef, useCallback } from "react";
 import { postScanUpload, ScanResult } from "../../../lib/api";
 import AssessingStatus from "../../components/AssessingStatus";
+import Icon from "../../components/Icon";
+import { rememberScan } from "../../../lib/recentScans";
 
 // The steps /api/scan/upload really runs for an uploaded archive.
 const SCAN_STEPS = [
@@ -75,8 +77,7 @@ export default function ScanUploadPage() {
 
     try {
       const result: ScanResult = await postScanUpload(file, abortRef.current.signal);
-      sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
-      sessionStorage.setItem(`scan:${result.scan_id}:name`, file.name.replace(/\.zip$/i, ""));
+      rememberScan(result, file.name.replace(/\.zip$/i, ""));
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;
@@ -92,65 +93,64 @@ export default function ScanUploadPage() {
   }
 
   return (
-    <div className="max-w-lg space-y-6">
-      <div className="space-y-1">
-        <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
-          Back
-        </Link>
-        <h2 className="text-2xl font-semibold tracking-tight pt-2">Upload a zip</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Upload a zip of your codebase, up to {MAX_ZIP_MB} MB and 2,000 files. The code is read as text and never executed, so results are analysis, not test runs.
+    <div className="page-narrow page">
+      <header className="page-header">
+        <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
+        <h2 className="title-1">Upload a zip</h2>
+        <p className="page-lede">
+          Upload a zip of your codebase, up to {MAX_ZIP_MB} MB and 2,000 files. The code is read as text and
+          never executed, so results are analysis, not test runs.
         </p>
-      </div>
+      </header>
 
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        {/* Drop zone */}
-        <div
-          role="region"
-          aria-label="File drop zone"
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-          className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-            dragOver
-              ? "border-blue-400 bg-blue-50 dark:bg-blue-900/10"
-              : "border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600"
-          }`}
-        >
+      <form onSubmit={handleSubmit} className="form" noValidate>
+        <div className="field">
           <input
             ref={inputRef}
             id="zip-file"
             type="file"
             accept=".zip"
             className="sr-only"
-            aria-label="Choose zip file"
+            tabIndex={-1}
             onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
             disabled={stage === "uploading"}
           />
-          {file ? (
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{file.name}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                {(file.size / (1024 * 1024)).toFixed(2)} MB
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Drag and drop a <code className="font-mono">.zip</code> file here, or{" "}
-                <span className="text-blue-600 dark:text-blue-400">browse</span>
-              </p>
-              <p className="text-xs text-gray-400 dark:text-gray-600">Maximum {MAX_ZIP_MB} MB</p>
-            </div>
+          <div
+            role="button"
+            tabIndex={stage === "uploading" ? -1 : 0}
+            aria-label={file ? `Selected ${file.name}. Choose a different zip file` : "Choose a zip file"}
+            aria-describedby={fileError ? "file-error" : undefined}
+            onClick={() => inputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                inputRef.current?.click();
+              }
+            }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            className={`dropzone ${dragOver ? "is-over" : ""} ${file ? "has-file" : ""}`}
+          >
+            <span className={`tile ${file ? "" : "cyan"}`}><Icon name={file ? "folder" : "upload"} /></span>
+            {file ? (
+              <>
+                <span className="dropzone-title">{file.name}</span>
+                <span className="dropzone-hint">{(file.size / (1024 * 1024)).toFixed(2)} MB · Click to choose a different file</span>
+              </>
+            ) : (
+              <>
+                <span className="dropzone-title">Drop a .zip here, or click to choose</span>
+                <span className="dropzone-hint">Up to {MAX_ZIP_MB} MB</span>
+              </>
+            )}
+          </div>
+          {fileError && (
+            <p id="file-error" role="alert" className="field-error">
+              {fileError}
+            </p>
           )}
         </div>
-
-        {fileError && (
-          <p role="alert" className="text-xs text-red-600 dark:text-red-400">
-            {fileError}
-          </p>
-        )}
 
         {stage === "uploading" && (
           <AssessingStatus
@@ -161,25 +161,17 @@ export default function ScanUploadPage() {
         )}
 
         {error && (
-          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          <p role="alert" className="alert">
             {error}
           </p>
         )}
 
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={!file || !!fileError || stage === "uploading"}
-            className="px-5 py-2 rounded-lg bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 text-sm font-medium transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+        <div className="actions">
+          <button type="submit" disabled={!file || !!fileError || stage === "uploading"} className="btn btn-primary btn-lg">
             {stage === "uploading" ? "Scanning…" : "Scan zip"}
           </button>
           {stage === "uploading" && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="px-5 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
-            >
+            <button type="button" onClick={handleCancel} className="btn btn-secondary btn-lg">
               Cancel
             </button>
           )}

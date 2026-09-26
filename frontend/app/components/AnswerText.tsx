@@ -8,8 +8,7 @@ import type { ReactNode } from "react";
  * on every streamed token. An unterminated code fence renders as code to the end.
  */
 
-const CHIP =
-  "rounded px-1.5 text-xs font-mono bg-verdigris-50 text-verdigris-700 dark:bg-verdigris-900/40 dark:text-verdigris-300";
+const CHIP = "answer-cite";
 
 // `code` | **bold** | [path], [path:line], [path:line-line] (a bare [word] is not a citation)
 const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[(?=[^\]\s]*[./:])[\w./@\\-]+(?::\d+(?:-\d+)?)?\](?!\())/g;
@@ -32,7 +31,7 @@ function inline(text: string): ReactNode[] {
     const [token, code, bold] = m;
     if (code) {
       out.push(
-        <code key={key++} className="rounded px-1 font-mono text-[0.85em] bg-gray-100 dark:bg-gray-800">
+        <code key={key++} className="answer-code">
           {token.slice(1, -1)}
         </code>
       );
@@ -134,7 +133,7 @@ function ItemView({ item }: { item: Item }) {
     <li>
       {inline(item.text)}
       {item.more.map((line, k) => (
-        <span key={k} className="block">
+        <span key={k} className="answer-more">
           {inline(line)}
         </span>
       ))}
@@ -144,27 +143,24 @@ function ItemView({ item }: { item: Item }) {
 
 export default function AnswerText({ text }: { text: string }) {
   return (
-    <div className="space-y-2 text-sm leading-relaxed text-gray-800 dark:text-gray-200 break-words">
+    <div className="answer">
       {parse(text).map((b, i) => {
         switch (b.kind) {
           case "code":
             return (
-              <pre
-                key={i}
-                className="rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 font-mono text-xs leading-relaxed overflow-x-auto"
-              >
+              <pre key={i} className="answer-pre">
                 <code>{b.text}</code>
               </pre>
             );
           case "heading":
             return (
-              <p key={i} className="font-semibold text-gray-900 dark:text-gray-100">
+              <p key={i} className="answer-heading">
                 {inline(b.text)}
               </p>
             );
           case "ul":
             return (
-              <ul key={i} className="list-disc pl-5 space-y-1">
+              <ul key={i} className="answer-list">
                 {b.items.map((it, j) => (
                   <ItemView key={j} item={it} />
                 ))}
@@ -172,7 +168,7 @@ export default function AnswerText({ text }: { text: string }) {
             );
           case "ol":
             return (
-              <ol key={i} start={b.start} className="list-decimal pl-5 space-y-1">
+              <ol key={i} start={b.start} className="answer-list answer-ol">
                 {b.items.map((it, j) => (
                   <ItemView key={j} item={it} />
                 ))}
@@ -180,7 +176,7 @@ export default function AnswerText({ text }: { text: string }) {
             );
           default:
             return (
-              <p key={i} className="whitespace-pre-wrap">
+              <p key={i} className="answer-p">
                 {inline(b.text)}
               </p>
             );

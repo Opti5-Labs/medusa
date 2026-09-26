@@ -2,6 +2,7 @@
 
 import type { FixAttempt, LogEvent, Mode } from "../../lib/api";
 import Badge, { type Tone } from "./Badge";
+import Icon from "./Icon";
 import LogView from "./LogView";
 
 const STATUS: Record<FixAttempt["sandbox_status"], { label: string; tone: Tone }> = {
@@ -13,7 +14,7 @@ const STATUS: Record<FixAttempt["sandbox_status"], { label: string; tone: Tone }
 
 function DiffView({ patch }: { patch: string }) {
   return (
-    <pre className="max-h-64 overflow-auto rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-2 text-xs leading-relaxed">
+    <pre className="diff-view">
       {patch.split("\n").map((line, i) => {
         const tone = line.startsWith("+") && !line.startsWith("+++")
           ? "text-green-700 dark:text-green-400"
@@ -49,13 +50,11 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
   const s = c.patch_stats;
   return (
     <article
-      className={`rounded-lg border p-3 space-y-2 min-w-0 ${
-        recommended ? "border-green-500 ring-1 ring-green-500" : "border-gray-200 dark:border-gray-800"
-      }`}
+      className={`card candidate ${recommended ? "holo-rim is-recommended" : ""}`}
     >
-      <header className="flex items-start justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-sm font-semibold">{c.candidate_id}</span>
+      <header className="candidate-head">
+        <div className="badges">
+          <span className="candidate-id">{c.candidate_id}</span>
           <Badge tone={STATUS[c.sandbox_status].tone}>{STATUS[c.sandbox_status].label}</Badge>
           {c.origin === "prepared" && <Badge>Prepared candidate</Badge>}
           {c.origin === "bob" && <Badge tone="violet">Bob</Badge>}
@@ -66,19 +65,19 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
         {canHide && (
           <button
             onClick={onHide}
-            className="text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+            className="icon-button candidate-hide"
             aria-label={`Hide ${c.candidate_id}`}
             title="Hide this candidate"
           >
-            ✕
+            <Icon name="close" />
           </button>
         )}
       </header>
 
-      <p className="text-sm text-gray-700 dark:text-gray-300">{c.approach}</p>
+      <p className="panel-text">{c.approach}</p>
 
       {(r || s) && (
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        <dl className="candidate-stats">
           {r && (
             <>
               <dt className="text-gray-500">Reproducer</dt>
@@ -108,29 +107,25 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
       )}
 
       {c.error && c.sandbox_status !== "running" && (
-        <p className="text-xs text-red-600 dark:text-red-400 break-all">{c.error}</p>
+        <p className="field-error">{c.error}</p>
       )}
 
       {mode === "sandboxed" && <LogView events={log} showSource={false} maxHeight="max-h-40" emptyText="Queued…" />}
 
       {c.patch && (
-        <details open={mode === "reasoning"}>
-          <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
+        <details className="disclosure" open={mode === "reasoning"}>
+          <summary>
+            <Icon name="chevron" />
             {mode === "reasoning" ? "Proposed patch (not applied or tested)" : "Patch"}
           </summary>
-          <div className="mt-1">
-            <DiffView patch={c.patch} />
-          </div>
+          <DiffView patch={c.patch} />
         </details>
       )}
 
       {finished && (downloadUrl || patchUrl) && (
-        <div className="flex flex-wrap gap-2">
+        <div className="actions">
           {downloadUrl && (
-            <a
-              href={downloadUrl}
-              className="inline-block text-xs px-3 py-1.5 rounded-md bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 font-medium"
-            >
+            <a href={downloadUrl} className="btn btn-primary btn-sm">
               Download fixed code (.zip)
             </a>
           )}
@@ -138,7 +133,7 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
             <a
               href={patchUrl}
               title="A unified diff you can apply from the repository root with git apply"
-              className="inline-block text-xs px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900 font-medium"
+              className="btn btn-secondary btn-sm"
             >
               {mode === "sandboxed" ? "Download .patch" : "Download .patch (untested)"}
             </a>

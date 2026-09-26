@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { postScan, ScanResult } from "../../lib/api";
 import AssessingStatus from "./AssessingStatus";
+import Icon from "./Icon";
+import { rememberScan } from "../../lib/recentScans";
 
 // What the demo scan really does: read the bundled OptiLearn snapshot, take
 // its prepared issue list, and map each issue to sandboxed or reasoning mode.
@@ -14,10 +16,6 @@ const DEMO_STEPS = [
   "Matching issues to the sandbox harness",
 ];
 const STEP_MS = 900;
-// The demo's issues are prepared in advance, so the request itself returns
-// almost instantly. Hold the steps long enough to be readable instead of
-// flashing past; the work described has already finished by then.
-const MIN_VISIBLE_MS = DEMO_STEPS.length * STEP_MS;
 
 export default function DemoButton() {
   const router = useRouter();
@@ -27,13 +25,9 @@ export default function DemoButton() {
   async function handleDemo() {
     setLoading(true);
     setError(null);
-    const started = Date.now();
     try {
       const result: ScanResult = await postScan({ source: "demo" });
-      sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
-      sessionStorage.setItem(`scan:${result.scan_id}:name`, "OptiLearn Demo");
-      const remaining = MIN_VISIBLE_MS - (Date.now() - started);
-      if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+      rememberScan(result, "OptiLearn demo");
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "The demo could not start. Please try again.");
@@ -42,28 +36,27 @@ export default function DemoButton() {
   }
 
   return (
-    <div className="space-y-3">
-      <button
-        onClick={handleDemo}
-        disabled={loading}
-        aria-busy={loading}
-        className="w-full sm:w-auto rounded-lg bg-verdigris-600 hover:bg-verdigris-700 text-white px-5 py-3 text-left transition-colors disabled:opacity-60 disabled:cursor-wait"
-      >
-        <span className="block font-medium">{loading ? "Opening the demo…" : "Run the OptiLearn demo"}</span>
-        <span className="block text-xs text-verdigris-100">One sandboxed bug plus five real historical issues</span>
+    <aside className="demo-card glass holo-rim" aria-labelledby="demo-heading">
+      <div className="demo-card-head">
+        <span className="tile purple"><Icon name="play" /></span>
+        <div><h2 id="demo-heading">Try the OptiLearn demo</h2><p>A real bug, start to finish</p></div>
+      </div>
+      <ol className="demo-steps">
+        <li>The Whisper bug is reproduced in an isolated sandbox.</li>
+        <li>Bob and Granite diagnose it and propose fixes.</li>
+        <li>Every fix runs the tests. The one that passes is recommended.</li>
+      </ol>
+      <button onClick={handleDemo} disabled={loading} aria-busy={loading} className="btn btn-primary btn-lg">
+        {loading ? "Opening…" : "Run the demo"}
       </button>
-      {loading && (
-        <AssessingStatus
-          steps={DEMO_STEPS}
-          stepMs={STEP_MS}
-          note="The demo's issue list is prepared in advance. The Whisper issue runs in the sandbox; the other issues are analysed as text."
-        />
+      {loading ? (
+        <div className="demo-progress">
+          <AssessingStatus steps={DEMO_STEPS} stepMs={STEP_MS} />
+        </div>
+      ) : (
+        <p className="demo-footnote">The issue list is prepared in advance. Only the Whisper issue runs in the sandbox; the others are analysed as text.</p>
       )}
-      {error && (
-        <p role="alert" className="text-sm text-fail dark:text-red-400">
-          {error}
-        </p>
-      )}
-    </div>
+      {error && <p role="alert" className="demo-error">{error}</p>}
+    </aside>
   );
 }
