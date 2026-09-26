@@ -196,7 +196,10 @@ async def test_general_repo_repro_without_granite_errors_visibly(client):
         )
     ).json()
     assert scan["issues"] == []  # nothing fabricated without Granite
-    assert any("Granite is not configured" in w for w in scan["warnings"])
+    assert any(
+        "Granite: Granite is not configured" in w and "Bob: BOB_API_KEY is not set" in w
+        for w in scan["warnings"]
+    )
 
 
 async def test_debug_candidate_bounds(client, fake_sandbox):

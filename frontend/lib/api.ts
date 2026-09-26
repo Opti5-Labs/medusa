@@ -59,6 +59,7 @@ export interface Issue {
   function: string | null;
   line: number | null;
   github_url: string | null;
+  found_by: "granite" | "bob" | null; // scan issues only
 }
 
 export interface ScanResult {

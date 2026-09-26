@@ -28,6 +28,11 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
         <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
           {SOURCE_LABELS[issue.source] ?? issue.source}
         </span>
+        {issue.found_by && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300">
+            Found by {issue.found_by === "bob" ? "IBM Bob" : "Granite"}
+          </span>
+        )}
         {issue.category && (
           <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300">
             {issue.category}

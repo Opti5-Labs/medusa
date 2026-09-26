@@ -145,7 +145,8 @@ The user can pick any other passing candidate for download.
 ## Pipeline (general repos)
 
 ```text
-Ingest (limits, safe extract) → file selection → Granite scan → issues (+ GitHub Issues)
+Ingest (limits, safe extract) → file selection → Granite scan (Bob scan if Granite
+cannot analyse the code) → issues labelled with who found them (+ GitHub Issues)
   │
   ▼
 Reproduce: one Granite call → root-cause hypothesis with file/line citations → plausible + confidence
