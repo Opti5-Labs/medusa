@@ -70,6 +70,7 @@ RATE_SCANS_PER_WINDOW: int = 5
 # "Reproduce and Debug" is two runs, so this allows three full flows per window.
 RATE_REPRO_DEBUG_PER_WINDOW: int = 6
 RATE_ASK_PER_WINDOW: int = 6
+RATE_ASK_INSTANT_PER_WINDOW: int = 60  # instant answers call no model; generous
 RATE_WINDOW_SECONDS: int = 600  # 10 minutes
 
 # ── Timeouts ───────────────────────────────────────────────────────────────────

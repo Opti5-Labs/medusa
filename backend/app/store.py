@@ -44,6 +44,7 @@ _MAX_DEMO_SCANS = 1000
 # Cap on live repro/debug runs across all users.
 _MAX_RUNS = 200
 _MAX_ASK_RUNS = 300
+_FINISHED_ASK_KEEP_SECONDS = 60
 _MAX_HISTORY = 20
 
 
@@ -236,6 +237,14 @@ class RunStore:
         return max(runs, key=lambda r: r.created_at) if runs else None
 
     def add_ask(self, run: AskRun) -> None:
+        # a finished answer only needs to stay long enough for a browser to replay it
+        stale = time.monotonic() - _FINISHED_ASK_KEEP_SECONDS
+        for ask_id in [
+            k
+            for k, r in self.ask_runs.items()
+            if r.channel.closed and r.created_at < stale
+        ]:
+            del self.ask_runs[ask_id]
         if len(self.ask_runs) >= _MAX_ASK_RUNS:
             raise StoreFullError(
                 "Server is busy answering too many questions. Please try again shortly."

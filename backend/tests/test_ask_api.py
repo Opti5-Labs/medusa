@@ -38,6 +38,11 @@ async def client():
     ask_module._ask_limiter = RateLimiter(
         max_calls=100, window_seconds=600, what="questions"
     )
+    ask_module._ask_instant_limiter = RateLimiter(
+        max_calls=config.RATE_ASK_INSTANT_PER_WINDOW,
+        window_seconds=600,
+        what="questions",
+    )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as c:
@@ -271,6 +276,19 @@ async def test_rate_limit_applies_to_model_questions(client, fake_granite, limit
     resp = await _ask(client, scan_id, MODEL_QUESTION)
     assert resp.status_code == 429
     assert "questions" in resp.json()["detail"]
+
+
+async def test_instant_questions_have_their_own_generous_limit(client, fake_granite):
+    assert config.RATE_ASK_INSTANT_PER_WINDOW == 60
+    scan_id = await _scan(client)
+    for _ in range(60):
+        resp = await _ask(client, scan_id, "what are the issues?")
+        assert resp.status_code == 200, resp.text
+        await _stream(client, resp.json()["ask_id"])
+    resp = await _ask(client, scan_id, "what are the issues?")
+    assert resp.status_code == 429
+    assert "questions" in resp.json()["detail"]
+    assert fake_granite.calls == 0
 
 
 # ── Secrets and docs ──────────────────────────────────────────────────────────

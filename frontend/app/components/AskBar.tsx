@@ -146,6 +146,7 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
   const suggested = topIssue(scan.issues);
 
   // Stream the in-flight answer. The opener is memoised so it does not reconnect on every render.
+  // The stream depends only on `active`, never on panelOpen, so hiding the panel keeps it open.
   const open = useMemo(() => (active ? () => openAskStream(active.askId) : null), [active]);
   const id = active?.msgId ?? "";
   useRunStream<AskAnswer>(open, {
@@ -327,7 +328,9 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
             <button
               type="button"
               onClick={() => dispatch({ type: "clear" })}
-              className="underline underline-offset-2 hover:text-gray-900 dark:hover:text-gray-100"
+              disabled={busy}
+              title={busy ? "Wait for the current answer to finish" : undefined}
+              className="underline underline-offset-2 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-60 disabled:cursor-not-allowed disabled:no-underline"
             >
               Clear
             </button>

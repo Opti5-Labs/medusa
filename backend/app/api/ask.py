@@ -5,8 +5,9 @@ Ask Medusa API.
     POST /api/scan/{scan_id}/ask        -> AskStart
     GET  /api/ask/{ask_id}/events       -> SSE: log and token events, then done (AskAnswer)
 
-Only questions that need a model are rate limited; instant answers from scan
-data are free. Streams replay from the start, like the run streams.
+Questions that need a model have a tight per-IP limit; instant answers from scan
+data have a much more generous one. Streams replay from the start, like the run
+streams.
 """
 
 from fastapi import APIRouter, Request
@@ -27,6 +28,12 @@ router = APIRouter()
 
 _ask_limiter = RateLimiter(
     max_calls=config.RATE_ASK_PER_WINDOW,
+    window_seconds=config.RATE_WINDOW_SECONDS,
+    what="questions",
+)
+
+_ask_instant_limiter = RateLimiter(
+    max_calls=config.RATE_ASK_INSTANT_PER_WINDOW,
     window_seconds=config.RATE_WINDOW_SECONDS,
     what="questions",
 )
@@ -90,6 +97,8 @@ async def ask(scan_id: str, body: AskRequest, request: Request) -> AskStart:
         )
     if pipeline.classify(question, body.issue_id) == "model":
         _ask_limiter.check(request)
+    else:
+        _ask_instant_limiter.check(request)
     try:
         run = await start_ask(store, record, question, issue)
     except StoreFullError as exc:

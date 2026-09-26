@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -775,11 +776,8 @@ async def test_model_answer_streams_tokens_in_order_then_done(
 ) -> None:
     _fake_model(monkeypatch, ("Hel", "lo ", "there"))
     run, events = await _run(RunStore(), _repo(tmp_path))
-    assert [json.loads(d)["text"] for n, d in events if n == "token"] == [
-        "Hel",
-        "lo ",
-        "there",
-    ]
+    # short answers are held back until the stream ends, then sent in one piece
+    assert [json.loads(d)["text"] for n, d in events if n == "token"] == ["Hello there"]
     names = [n for n, _ in events]
     assert names[0] == "log" and names[-1] == "done"
     assert names.index("token") > 0
@@ -1287,7 +1285,7 @@ async def test_granite_attempt_reports_whether_tokens_were_emitted(
 async def test_cancelling_a_run_closes_the_stream_and_the_channel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fake = _fake_model(monkeypatch, ("x",), hang=True)
+    fake = _fake_model(monkeypatch, ("x" * 300,), hang=True)
     run = await ask.start_ask(RunStore(), _repo(tmp_path), QUESTION, None)
     async with asyncio.timeout(5):
         while not fake.prompts or not any(e[0] == "token" for e in run.channel._events):
@@ -1324,3 +1322,135 @@ async def test_instant_question_never_calls_the_model(
     assert "Answering from scan data (no model call)" in _logs(run, "info")
     assert not any(n == "token" for n, _ in events)
     assert record.history == [("what are the issues?", answer.answer)]
+
+
+# ── redaction of streamed and Bob-bound text ─────────────────────────────────
+
+
+def _tokens(events: list[tuple[str, str]]) -> list[str]:
+    return [json.loads(d)["text"] for n, d in events if n == "token"]
+
+
+async def test_streamed_tokens_are_redacted_even_when_a_key_is_split(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_key = "AKIA" + "0123456789ABCDEF"
+    _fake_model(monkeypatch, ("AKIA0123", "456789ABCDEF" + " rest"))
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    sent = _tokens(events)
+    assert not any(raw_key in t or "AKIA0123" in t for t in sent)
+    joined = "".join(sent)
+    assert "[REDACTED]" in joined
+    assert _final(events).answer == joined
+
+
+async def test_long_streams_send_settled_text_early_and_hold_back_the_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_key = "AKIA" + "0123456789ABCDEF"
+    head = "a" * 300
+    _fake_model(monkeypatch, (head, "AKIA0123", "456789ABCDEF", " end"))
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    sent = _tokens(events)
+    assert len(sent) > 1 and sent[0] == "a" * 100
+    assert raw_key not in "".join(sent)
+    assert "".join(sent) == head + "[REDACTED] end"
+
+
+async def test_open_private_key_is_never_streamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    begin = "-----BEGIN RSA PRIVATE " + "KEY-----\n"
+    body = "MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n"
+    end = "-----END RSA PRIVATE " + "KEY-----"
+    _fake_model(monkeypatch, ("start " + "z" * 250 + begin, body * 8, end, " tail"))
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    joined = "".join(_tokens(events))
+    assert "MIIBOg" not in joined and "BEGIN RSA" not in joined
+    assert "[REDACTED]" in joined and joined.endswith(" tail")
+
+
+async def test_bob_gets_redacted_files_and_prompt_with_lines_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aws = "AKIA" + "0123456789ABCDEF"
+    pem = (
+        "-----BEGIN RSA PRIVATE " + "KEY-----\nMIIBOgIBAAJBAKj34Gkx\nabcdef\n"
+        "-----END RSA PRIVATE " + "KEY-----"
+    )
+    _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
+    fake_bob = _fake_bob(monkeypatch)
+    record = _repo(tmp_path)
+    source = (
+        f'KEY = "{aws}"  # parser_total\n'
+        f'PEM = """{pem}"""\n'
+        "def parser_total():\n"
+        "    return 1\n"
+    )
+    _write(tmp_path, "parser_secrets.py", source)
+    await _run(RunStore(), record)
+    prompt, files = fake_bob.calls[0]
+    assert aws not in prompt and "MIIBOg" not in prompt
+    for text in files.values():
+        assert aws not in text and "MIIBOg" not in text and "BEGIN RSA" not in text
+    secrets = files["parser_secrets.py"].splitlines()
+    real = source.splitlines()
+    assert len(secrets) == len(real)
+    assert secrets[real.index("def parser_total():")] == "def parser_total():"
+
+
+async def test_bob_token_is_sent_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aws = "AKIA" + "0123456789ABCDEF"
+    _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
+    _fake_bob(
+        monkeypatch, BobAnswer("ok", data=ask.BobQA(answer=f"key {aws}"), cost=0.01)
+    )
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    assert _tokens(events) == ["key [REDACTED]"]
+
+
+# ── store: finished ask runs ─────────────────────────────────────────────────
+
+
+async def _ask_run(ask_id: str, age: float, finished: bool) -> ask.AskRun:
+    run = ask.AskRun(ask_id=ask_id, scan_id="s", channel=EventChannel())
+    run.created_at = time.monotonic() - age
+    if finished:
+        await run.channel.done("{}")
+    return run
+
+
+async def test_full_store_accepts_a_run_when_only_old_finished_runs_fill_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import store as store_mod
+
+    monkeypatch.setattr(store_mod, "_MAX_ASK_RUNS", 2)
+    store = RunStore()
+    store.add_ask(await _ask_run("a", 120, True))
+    store.add_ask(await _ask_run("b", 90, True))
+    store.add_ask(await _ask_run("c", 0, False))
+    assert set(store.ask_runs) == {"c"}
+
+
+async def test_full_store_still_rejects_recent_or_running_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import store as store_mod
+
+    monkeypatch.setattr(store_mod, "_MAX_ASK_RUNS", 2)
+    store = RunStore()
+    store.add_ask(await _ask_run("a", 120, False))  # old but still running
+    store.add_ask(await _ask_run("b", 5, True))  # finished, but young
+    with pytest.raises(store_mod.StoreFullError):
+        store.add_ask(await _ask_run("c", 0, False))
+
+
+async def test_a_recently_finished_run_still_replays() -> None:
+    store = RunStore()
+    store.add_ask(await _ask_run("a", 10, True))
+    store.add_ask(await _ask_run("b", 0, False))
+    assert "a" in store.ask_runs
+    assert [n for n, _ in await _collect(store.ask_runs["a"])] == ["done"]

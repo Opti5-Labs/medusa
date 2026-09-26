@@ -600,7 +600,7 @@ def _redact_keeping_lines(text: str) -> str:
 def _render_excerpt(excerpt: Excerpt) -> str:
     lines = _redact_keeping_lines("\n".join(excerpt.lines)).split("\n")
     body = "\n".join(f"{excerpt.start + i:>5} | {line}" for i, line in enumerate(lines))
-    return f"### FILE: {neutralise(excerpt.path)}\n{body}"
+    return f"### FILE: {_clean(excerpt.path)}\n{body}"
 
 
 def _known_issues(record: ScanRecord, issue: Issue | None) -> str:
@@ -660,7 +660,7 @@ def _assemble(
     history: str,
     sandbox: str | None,
 ) -> str:
-    material = [neutralise(map_text), *(_render_excerpt(e) for e in excerpts)]
+    material = [_clean(map_text), *(_render_excerpt(e) for e in excerpts)]
     if truncated:
         material.append(_TRUNCATED_NOTE)
     blocks = [
@@ -854,9 +854,46 @@ def _timeout_message() -> str:
     )
 
 
+_HOLD_BACK_CHARS = 200
+_KEY_BEGIN_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+
+
+class _SafeTokens:
+    """Sends only redacted text; the tail is held back until more text arrives.
+
+    A secret can be split across pieces, so redact() runs over everything seen so
+    far and only the settled part (all but the last 200 characters, and nothing
+    from an unterminated private key) leaves the server.
+    """
+
+    def __init__(self, channel: EventChannel) -> None:
+        self._channel = channel
+        self._raw = ""
+        self._sent = 0
+
+    async def feed(self, piece: str) -> None:
+        self._raw += piece
+        safe = redact(self._raw)
+        end = len(safe) - _HOLD_BACK_CHARS
+        begins = list(_KEY_BEGIN_RE.finditer(safe))
+        if begins:  # redact() would have replaced a complete key, so this one is open
+            end = min(end, begins[-1].start())
+        await self._send(safe, end)
+
+    async def flush(self) -> None:
+        safe = redact(self._raw)
+        await self._send(safe, len(safe))
+
+    async def _send(self, safe: str, end: int) -> None:
+        if end > self._sent:
+            await self._channel.token(safe[self._sent : end])
+            self._sent = end
+
+
 async def _granite_attempt(run: AskRun, system: str, user: str) -> Attempt:
     pieces: list[str] = []
-    emitted = False
+    emitted = False  # whether the model produced any text
+    tokens = _SafeTokens(run.channel)
     try:
         async with asyncio.timeout(config.ASK_TIMEOUT_S):
             # aclosing releases Granite's semaphore even when this run is cancelled
@@ -867,14 +904,18 @@ async def _granite_attempt(run: AskRun, system: str, user: str) -> Attempt:
             ) as stream:
                 async for piece in stream:
                     pieces.append(piece)
-                    await run.channel.token(piece)
                     emitted = True
+                    await tokens.feed(piece)
     except granite.GraniteUnavailable as exc:
+        await tokens.flush()
         return Attempt(None, str(exc), emitted, unavailable=True)
     except granite.GraniteError as exc:
+        await tokens.flush()
         return Attempt(None, str(exc), emitted)
     except TimeoutError:
+        await tokens.flush()
         return Attempt(None, _timeout_message(), emitted)
+    await tokens.flush()
     text = "".join(pieces)
     if not text.strip():
         return Attempt(None, "The model returned an empty answer.", emitted)
@@ -1016,7 +1057,8 @@ async def _bob_answer(
     await run.channel.emit(
         "ask", "info", "Granite is unavailable, asking IBM Bob instead (read-only)"
     )
-    files = {p.path: p.text for p in retrieval.picked}
+    # Bob only ever sees redacted text; line count is kept so its citations hold
+    files = {p.path: _redact_keeping_lines(p.text) for p in retrieval.picked}
     bob_ranges: dict[str, list[tuple[int, int]]] = {}
     for p in retrieval.picked:
         last = p.start + max(1, len(p.text.splitlines())) - 1
@@ -1041,7 +1083,7 @@ async def _bob_answer(
             issue,
             _nobody_could(granite_reason, answer.error or "unknown error"),
         )
-    await run.channel.token(answer.data.answer)
+    await run.channel.token(redact(answer.data.answer))
     await _finish(
         run,
         record,
