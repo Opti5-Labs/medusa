@@ -6,6 +6,7 @@ source text (the real container is covered in test_sandbox_runner.py), so these
 run anywhere. Granite is unconfigured, so the demo uses prepared candidates.
 """
 
+import asyncio
 import io
 import json
 import zipfile
@@ -531,3 +532,125 @@ async def test_general_repo_bob_diagnoses_and_proposes_unverified_patch(
     first = done["session"]["candidates"][0]
     assert first["origin"] == "bob" and first["sandbox_status"] == "not_applicable"
     assert done["recommendation"]["verified"] is False
+
+
+# ── .patch download ───────────────────────────────────────────────────────────
+
+
+def _git_apply_check(repo, patch_file):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "apply", "--check", str(patch_file)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+async def _finished_demo_debug(client, n=4):
+    issue_id = await _demo_issue(client)
+    session = (
+        await client.post(f"/api/issues/{issue_id}/debug", json={"candidates": n})
+    ).json()
+    _, done = await _events(client, f"/api/debug/{session['session_id']}/events")
+    return session["session_id"], {
+        c["candidate_id"]: c for c in done["session"]["candidates"]
+    }
+
+
+async def test_verified_patch_downloads_and_applies_with_git(
+    client, fake_sandbox, tmp_path
+):
+    import shutil
+
+    session_id, cands = await _finished_demo_debug(client)
+    passed = next(cid for cid, c in cands.items() if c["sandbox_status"] == "passed")
+    resp = await client.get(
+        f"/api/debug/{session_id}/patch", params={"candidate_id": passed}
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/x-diff")
+    assert f"medusa-{passed}.patch" in resp.headers["content-disposition"]
+    body = resp.text
+    assert body.startswith(f"# Medusa fix candidate {passed}:")
+    assert "Verified in Medusa's sandbox" in body and "NOT executed" not in body
+
+    # The file applies to the original source with git, header and all.
+    repo = tmp_path / "repo"
+    shutil.copytree(optilearn.OPTILEARN_SRC, repo / "optilearn")
+    patch_file = tmp_path / "fix.patch"
+    patch_file.write_text(body)
+    check = await asyncio.to_thread(_git_apply_check, repo, patch_file)
+    assert check.returncode == 0, check.stderr
+
+
+async def test_failed_candidate_patch_is_refused(client, fake_sandbox):
+    session_id, cands = await _finished_demo_debug(client)
+    failed = next(cid for cid, c in cands.items() if c["sandbox_status"] == "failed")
+    resp = await client.get(
+        f"/api/debug/{session_id}/patch", params={"candidate_id": failed}
+    )
+    assert resp.status_code == 409
+
+
+async def test_patch_for_unknown_session_or_candidate_is_404(client, fake_sandbox):
+    assert (
+        await client.get("/api/debug/nope/patch", params={"candidate_id": "c1"})
+    ).status_code == 404
+    session_id, _ = await _finished_demo_debug(client, n=2)
+    resp = await client.get(
+        f"/api/debug/{session_id}/patch", params={"candidate_id": "c9"}
+    )
+    assert resp.status_code == 404
+
+
+async def test_general_repo_patch_is_labelled_untested(client, monkeypatch):
+    from app.agents import panel
+    from app.agents.results import CandidateFix, InvestigatorResult
+
+    diff = "--- a/app/main.py\n+++ b/app/main.py\n@@ -1,2 +1,4 @@\n def divide(a, b):\n+    if b == 0:\n+        raise ZeroDivisionError('b is zero')\n     return a / b\n"
+
+    async def fake_investigate(prompt, files):
+        return InvestigatorResult(
+            investigator="bob",
+            status="ok",
+            root_cause="no zero guard",
+            candidate_fixes=[CandidateFix(approach="Guard zero", patch=diff)],
+        )
+
+    monkeypatch.setattr(panel.bob, "live_unavailable_reason", lambda: None)
+    monkeypatch.setattr(panel.bob, "investigate", fake_investigate)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("app/main.py", "def divide(a, b):\n    return a / b\n")
+    scan = (
+        await client.post(
+            "/api/scan/upload",
+            files={"file": ("r.zip", buf.getvalue(), "application/zip")},
+        )
+    ).json()
+    from app.api import runs as runs_module
+
+    record = await runs_module._get_store().get(scan["scan_id"])
+    issue = Issue(
+        id="gen-p",
+        title="Division by zero",
+        description="divide crashes",
+        priority="High",
+        source="github_issue",
+        file="app/main.py",
+    )
+    record.result.issues.append(issue)
+    runs_module._get_store()._issue_index[issue.id] = scan["scan_id"]
+
+    session = (await client.post("/api/issues/gen-p/debug", json={})).json()
+    await _events(client, f"/api/debug/{session['session_id']}/events")
+    resp = await client.get(
+        f"/api/debug/{session['session_id']}/patch", params={"candidate_id": "c1"}
+    )
+    assert resp.status_code == 200
+    assert "medusa-c1-untested.patch" in resp.headers["content-disposition"]
+    assert "NOT executed or tested" in resp.text
+    assert resp.text.rstrip().endswith("return a / b")

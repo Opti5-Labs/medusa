@@ -39,11 +39,12 @@ interface Props {
   recommended: boolean;
   finished: boolean;
   downloadUrl: string | null;
+  patchUrl: string | null;
   canHide: boolean;
   onHide: () => void;
 }
 
-export default function CandidatePanel({ candidate: c, mode, log, recommended, finished, downloadUrl, canHide, onHide }: Props) {
+export default function CandidatePanel({ candidate: c, mode, log, recommended, finished, downloadUrl, patchUrl, canHide, onHide }: Props) {
   const r = c.test_results;
   const s = c.patch_stats;
   return (
@@ -123,13 +124,26 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
         </details>
       )}
 
-      {finished && downloadUrl && (
-        <a
-          href={downloadUrl}
-          className="inline-block text-xs px-3 py-1.5 rounded-md bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 font-medium"
-        >
-          Download fixed code (.zip)
-        </a>
+      {finished && (downloadUrl || patchUrl) && (
+        <div className="flex flex-wrap gap-2">
+          {downloadUrl && (
+            <a
+              href={downloadUrl}
+              className="inline-block text-xs px-3 py-1.5 rounded-md bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 font-medium"
+            >
+              Download fixed code (.zip)
+            </a>
+          )}
+          {patchUrl && (
+            <a
+              href={patchUrl}
+              title="A unified diff you can apply from the repository root with git apply"
+              className="inline-block text-xs px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900 font-medium"
+            >
+              {mode === "sandboxed" ? "Download .patch" : "Download .patch (untested)"}
+            </a>
+          )}
+        </div>
       )}
     </article>
   );

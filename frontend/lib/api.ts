@@ -264,6 +264,10 @@ export const getDebugDownloadUrl = (
 ): string =>
   `${BASE}/api/debug/${sessionId}/download?candidate_id=${encodeURIComponent(candidateId)}`;
 
+/** GET /api/debug/{session_id}/patch?candidate_id= (a git-applyable .patch) */
+export const getDebugPatchUrl = (sessionId: string, candidateId: string): string =>
+  `${BASE}/api/debug/${sessionId}/patch?candidate_id=${encodeURIComponent(candidateId)}`;
+
 // ── Architecture (mirror of the same section in backend/app/models/contracts.py) ─
 
 export type ArchitectureStatus = "running" | "complete" | "partial" | "unavailable" | "error";
