@@ -221,3 +221,87 @@ def test_snapshot_is_readable_by_the_sandbox_user_and_keeps_symlinks(tmp_path):
         assert (snap / "link").readlink() == Path("/etc/passwd")
     finally:
         shutil.rmtree(snap.parent)
+
+
+def _write_repo(root: Path, files: dict[str, str]) -> None:
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+
+
+def _allow(monkeypatch) -> None:
+    monkeypatch.setattr("app.config.ARBITRARY_EXECUTION", True)
+    runtime = os.environ.get("EXEC_RUNTIME", "runsc")
+    monkeypatch.setattr("app.config.EXEC_RUNTIME", runtime)
+    monkeypatch.setattr("app.config.EXEC_ALLOW_UNSANDBOXED_RUNTIME", runtime != "runsc")
+
+
+@integration
+async def test_a_hostile_install_cannot_grow_deps_past_the_cap(tmp_path, monkeypatch):
+    _allow(monkeypatch)
+    monkeypatch.setattr("app.config.EXEC_DEPS_SIZE", "64m")
+    _write_repo(
+        tmp_path,
+        {
+            # setup.py runs as the sandbox user and writes straight to /deps
+            "setup.py": (
+                "try:\n"
+                "    with open('/deps/fill', 'wb') as f:\n"
+                "        for _ in range(200):\n"
+                "            f.write(bytes(1 << 20))\n"
+                "except OSError:\n"
+                "    pass\n"
+                "from setuptools import setup\n"
+                "setup(name='filler', version='0.1')\n"
+            ),
+            "tests/test_x.py": "def test_x():\n    assert True\n",
+        },
+    )
+    prep = await pyexec.prepare(tmp_path, _noop)
+    assert prep.env is not None, prep.error
+    try:
+        assert any("size limit" in e for e in prep.env.install_errors)
+        client = pyexec._client()
+        out = client.containers.get(prep.env.holder).exec_run(["du", "-sm", "/deps"])
+        assert int(out.output.split()[0]) <= 64
+    finally:
+        await pyexec.release(prep.env)
+
+
+@integration
+async def test_output_floods_are_bounded(tmp_path, monkeypatch):
+    _allow(monkeypatch)
+    monkeypatch.setattr("app.config.EXEC_LOG_MAX_LINES", 100)
+    _write_repo(
+        tmp_path,
+        {
+            # Repo code runs inside the harness process, so it can find the
+            # container's real stdout (pytest keeps a copy) and write past capture.
+            "conftest.py": (
+                "import os\n"
+                "for fd in map(int, os.listdir('/proc/self/fd')):\n"
+                "    try:\n"
+                "        if os.readlink(f'/proc/self/fd/{fd}').startswith('pipe:'):\n"
+                "            os.write(fd, b'x' * 500_000)\n"  # one huge line, no newline
+                "            for _ in range(3000):\n"
+                "                os.write(fd, b'noise\\n')\n"
+                "    except OSError:\n"
+                "        pass\n"
+            ),
+            "tests/test_x.py": "def test_x():\n    assert True\n",
+        },
+    )
+    prep = await pyexec.prepare(tmp_path, _noop)
+    assert prep.env is not None, prep.error
+    lines: list[str] = []
+
+    async def keep(line: str) -> None:
+        lines.append(line)
+
+    try:
+        run = await pyexec.run_tests(prep.env, keep)
+        assert run.ok and run.suite.passed == 1
+        assert len(lines) == 101 and lines[-1] == "[further output hidden]"
+        assert max(len(line) for line in lines) <= 2000
+    finally:
+        await pyexec.release(prep.env)

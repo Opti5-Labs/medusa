@@ -16,7 +16,10 @@ Isolation (all phases):
     - no credentials or host environment; non-root user; all capabilities
       dropped; no-new-privileges; memory, CPU and PID limits; wall-clock timeout
     - dependencies are installed into a RAM area capped at EXEC_DEPS_SIZE, then
-      persisted to a per-run volume that is deleted afterwards
+      kept in a per-run RAM volume of the same size (held open by an idle
+      container) that is deleted afterwards; nothing the repo writes reaches disk
+    - container logs are size-capped, and the host reads a bounded amount of
+      output; at most EXEC_MAX_ENVS prepared repos exist at once
 Install phase: the container's only network is an internal Docker network whose
 one exit is a proxy that allows TLS to PyPI and nothing else.
 Test phase: no network at all. Patches are applied inside the container.
@@ -43,15 +46,18 @@ _INSTALL_PREFIX = "MEDUSA_INSTALL "
 _RESULT_PREFIX = "MEDUSA_RESULT "
 _PROXY_URL = f"http://{config.EXEC_PROXY_NAME}:3128"
 _SQUID_CONF = config.REPO_ROOT / "sandbox" / "egress-proxy" / "squid.conf"
-_loop_semaphores: dict[int, asyncio.Semaphore] = {}
+_loop_semaphores: dict[tuple[int, str], asyncio.Semaphore] = {}
 
 
-def _semaphore() -> asyncio.Semaphore:
-    key = id(asyncio.get_running_loop())
-    if key not in _loop_semaphores:
-        _loop_semaphores.clear()
-        _loop_semaphores[key] = asyncio.Semaphore(config.EXEC_MAX_CONCURRENT)
-    return _loop_semaphores[key]
+def _semaphore(kind: str = "run") -> asyncio.Semaphore:
+    """'run': containers running at once; 'env': prepared repos alive at once."""
+    loop = id(asyncio.get_running_loop())
+    if (loop, kind) not in _loop_semaphores:
+        for key in [k for k in _loop_semaphores if k[0] != loop]:
+            del _loop_semaphores[key]
+        size = config.EXEC_MAX_CONCURRENT if kind == "run" else config.EXEC_MAX_ENVS
+        _loop_semaphores[(loop, kind)] = asyncio.Semaphore(size)
+    return _loop_semaphores[(loop, kind)]
 
 
 def _client():
@@ -106,6 +112,8 @@ class ExecEnv:
     code_dir: Path  # this run's own readable snapshot of the repo, mounted at /code
     installed: list[str] = field(default_factory=list)
     install_errors: list[str] = field(default_factory=list)
+    holder: str | None = None  # idle container keeping the RAM volume mounted
+    holds_slot: bool = False  # counts against EXEC_MAX_ENVS until released
 
 
 @dataclass
@@ -155,9 +163,19 @@ def parse_test_result(line: str) -> TestRun:
 # ── Container plumbing ────────────────────────────────────────────────────────
 
 
+def _log_config():
+    import docker
+
+    # Docker keeps container output on the host disk; cap it.
+    return docker.types.LogConfig(
+        type="json-file", config={"max-size": "10m", "max-file": "1"}
+    )
+
+
 def _base_kwargs(code_dir: Path) -> dict:
     """Settings shared by both phases. No environment from the host, ever."""
     return {
+        "log_config": _log_config(),
         "image": config.EXEC_IMAGE,
         "detach": True,
         "runtime": config.EXEC_RUNTIME,
@@ -252,6 +270,8 @@ async def _run(
             buffer = b""
             for chunk in container.logs(stream=True, follow=True):
                 buffer += chunk
+                if b"\n" not in buffer and len(buffer) > config.EXEC_LOG_MAX_LINE_BYTES:
+                    buffer = buffer[: config.EXEC_LOG_MAX_LINE_BYTES] + b"\n"
                 while b"\n" in buffer:
                     raw, buffer = buffer.split(b"\n", 1)
                     loop.call_soon_threadsafe(
@@ -270,13 +290,18 @@ async def _run(
         client = await asyncio.to_thread(_client)
         container = await asyncio.to_thread(client.containers.run, **kwargs)
         pumping = asyncio.create_task(asyncio.to_thread(pump))
+        shown = 0
         try:
             async with asyncio.timeout(timeout_s):
                 while (line := await queue.get()) is not None:
                     if line.startswith(prefix):
                         result = line
                     elif line.strip():
-                        await on_line(line[:2000])
+                        shown += 1
+                        if shown <= config.EXEC_LOG_MAX_LINES:
+                            await on_line(line[:2000])
+                        elif shown == config.EXEC_LOG_MAX_LINES + 1:
+                            await on_line("[further output hidden]")
                 await asyncio.to_thread(container.wait)
         except TimeoutError:
             await asyncio.to_thread(container.kill)
@@ -328,20 +353,23 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
     """Snapshot the repo and install its dependencies into a new volume. Never raises."""
     if (reason := await asyncio.to_thread(unavailable_reason)) is not None:
         return PrepareResult(None, reason)
+    slots = _semaphore("env")
+    if slots.locked():
+        await on_line("Waiting for a free sandbox (other repositories are running)")
+    await slots.acquire()
     volume = f"medusa-deps-{uuid.uuid4().hex[:12]}"
     try:
         snapshot = await asyncio.to_thread(_snapshot, code_dir)
     except OSError as exc:
+        slots.release()
         return PrepareResult(
             None, f"the repository could not be copied for the sandbox: {exc.strerror}"
         )
-    env = ExecEnv(volume=volume, code_dir=snapshot)
+    env = ExecEnv(volume=volume, code_dir=snapshot, holds_slot=True)
     try:
         client = await asyncio.to_thread(_client)
         await asyncio.to_thread(_ensure_egress, client)
-        # An ordinary volume (a tmpfs volume would lose its contents when the
-        # install container exits). Its size is bounded by the capped /staging area.
-        await asyncio.to_thread(client.volumes.create, name=volume, driver="local")
+        await asyncio.to_thread(_create_deps_volume, client, env)
     except Exception as exc:
         log.exception("pyexec: could not prepare the environment")
         await release(env)
@@ -360,9 +388,13 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
     if error:
         await release(env)
         return PrepareResult(None, f"Installing dependencies failed: {error}")
-    data = json.loads(line[len(_INSTALL_PREFIX) :])
-    env.installed = [str(x) for x in data.get("installed", [])]
-    env.install_errors = [str(x)[:300] for x in data.get("errors", [])]
+    try:
+        data = json.loads(line[len(_INSTALL_PREFIX) :])
+        env.installed = [str(x) for x in data.get("installed", [])][:200]
+        env.install_errors = [str(x)[:300] for x in data.get("errors", [])][:20]
+    except (ValueError, TypeError, AttributeError):
+        await release(env)
+        return PrepareResult(None, "the sandbox reported unreadable install results.")
     return PrepareResult(env)
 
 
@@ -398,19 +430,71 @@ async def run_tests(
             )
         if error:
             return TestRun(ok=False, error=error, duration_s=time.monotonic() - started)
-        run = parse_test_result(line)
+        try:
+            run = parse_test_result(line)
+        except (ValueError, TypeError, AttributeError):
+            return TestRun(
+                ok=False,
+                error="the sandbox reported unreadable results.",
+                duration_s=time.monotonic() - started,
+            )
         run.duration_s = time.monotonic() - started
         return run
     finally:
         shutil.rmtree(inputs, ignore_errors=True)
 
 
+def _create_deps_volume(client, env: ExecEnv) -> None:
+    """
+    A RAM volume capped at EXEC_DEPS_SIZE: whatever the repo's install writes
+    to /deps (setup.py runs as the same user as the copy) never reaches disk.
+    A tmpfs volume is unmounted, and emptied, once no container uses it, so an
+    idle container holds it open for the environment's lifetime.
+    """
+    client.volumes.create(
+        name=env.volume,
+        driver="local",
+        driver_opts={
+            "type": "tmpfs",
+            "device": "tmpfs",
+            "o": f"size={config.EXEC_DEPS_SIZE},uid=10001,gid=10001,mode=0755",
+        },
+    )
+    holder = client.containers.run(
+        config.EXEC_IMAGE,
+        entrypoint=["sleep", "infinity"],
+        command=[],
+        name=f"medusa-hold-{env.volume}",
+        detach=True,
+        runtime=config.EXEC_RUNTIME,
+        network_disabled=True,
+        read_only=True,
+        cap_drop=["ALL"],
+        security_opt=["no-new-privileges"],
+        user="10001:10001",
+        mem_limit="64m",
+        pids_limit=8,
+        environment={},
+        log_config=_log_config(),
+        volumes={env.volume: {"bind": "/deps", "mode": "ro"}},
+    )
+    env.holder = holder.id
+
+
+def _remove_env(env: ExecEnv) -> None:
+    client = _client()
+    if env.holder:
+        client.containers.get(env.holder).remove(force=True)
+    client.volumes.get(env.volume).remove(force=True)
+
+
 async def release(env: ExecEnv) -> None:
-    """Delete the dependency volume and the code snapshot. Never raises."""
+    """Delete the holder, the dependency volume and the code snapshot. Never raises."""
     shutil.rmtree(env.code_dir.parent, ignore_errors=True)
     try:
-        client = await asyncio.to_thread(_client)
-        vol = await asyncio.to_thread(client.volumes.get, env.volume)
-        await asyncio.to_thread(vol.remove, force=True)
+        await asyncio.to_thread(_remove_env, env)
     except Exception:  # noqa: BLE001  # pragma: no cover
         log.warning("pyexec: could not remove volume %s", env.volume)
+    if env.holds_slot:
+        env.holds_slot = False
+        _semaphore("env").release()
