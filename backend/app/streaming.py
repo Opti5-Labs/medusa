@@ -7,6 +7,7 @@ Replaying from the start means a reconnecting browser never misses events.
 """
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from typing import Literal
@@ -33,6 +34,9 @@ class EventChannel:
         self.log.append(event)
         await self._push("log", event.model_dump_json())
         return event
+
+    async def token(self, text: str) -> None:
+        await self._push("token", json.dumps({"text": text}))
 
     async def done(self, payload_json: str) -> None:
         async with self._cond:

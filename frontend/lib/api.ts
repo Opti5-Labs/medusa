@@ -156,6 +156,39 @@ export interface DebugDone {
   recommendation: Recommendation | null;
 }
 
+export type Grounding = "scan_data" | "sandbox_verified" | "reasoning";
+
+export interface AskCitation {
+  file: string;
+  line: number | null;
+}
+
+export interface AskStart {
+  ask_id: string;
+}
+
+export interface AskStatus {
+  enabled: boolean;
+  granite_available: boolean;
+  bob_available: boolean;
+  bob_reason: string | null;
+}
+
+/** scan_data only when answered_by is "scan"; sandbox_verified only for a sandbox-reproduced demo issue. */
+export interface AskAnswer {
+  ask_id: string;
+  question: string;
+  answer: string; // markdown; empty when error is set
+  grounding: Grounding;
+  answered_by: "scan" | "granite" | "bob";
+  citations: AskCitation[];
+  files_read: string[];
+  issue_id: string | null;
+  cost: number | null; // Bobcoins, Bob answers only
+  notice: string | null;
+  error: string | null;
+}
+
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 /** GET /api/health */

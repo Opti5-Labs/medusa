@@ -12,6 +12,7 @@ InvestigatorSource = Literal[
 ]
 # Who produced a fix candidate.
 CandidateOrigin = Literal["bob", "granite", "prepared"]
+Grounding = Literal["scan_data", "sandbox_verified", "reasoning"]
 
 # ── Core models ────────────────────────────────────────────────────────────────
 
@@ -123,3 +124,39 @@ class DebugDone(BaseModel):
 
     session: DebugSession
     recommendation: Recommendation | None = None
+
+
+class AskCitation(BaseModel):
+    file: str
+    line: int | None = None
+
+
+class AskStart(BaseModel):
+    ask_id: str
+
+
+class AskStatus(BaseModel):
+    enabled: bool
+    granite_available: bool
+    bob_available: bool
+    bob_reason: str | None = None
+
+
+class AskAnswer(BaseModel):
+    """
+    scan_data only when answered_by == "scan"; sandbox_verified only when a
+    sandbox actually reproduced the scoped issue on the demo (never for general
+    repos); otherwise reasoning.
+    """
+
+    ask_id: str
+    question: str
+    answer: str  # markdown; empty when error is set
+    grounding: Grounding
+    answered_by: Literal["scan", "granite", "bob"]  # "scan" = no model call
+    citations: list[AskCitation] = []
+    files_read: list[str] = []  # paths shown to the model
+    issue_id: str | None = None
+    cost: float | None = None  # Bobcoins, Bob answers only
+    notice: str | None = None  # e.g. why Bob answered instead of Granite
+    error: str | None = None  # human-readable, set when no answer could be produced
