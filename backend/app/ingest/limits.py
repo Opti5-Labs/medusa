@@ -200,6 +200,12 @@ def _count_lines(path: Path) -> int:
 
 
 def filter_tree(root: Path) -> tuple[list[Path], list[str]]:
+    """Walk *root*, skip non-source files, apply scan cap. See filter_tree_with_total."""
+    selected, warnings, _ = filter_tree_with_total(root)
+    return selected, warnings
+
+
+def filter_tree_with_total(root: Path) -> tuple[list[Path], list[str], int]:
     """
     Walk *root*, skip non-source files, apply scan cap.
 
@@ -215,8 +221,9 @@ def filter_tree(root: Path) -> tuple[list[Path], list[str]]:
     so smaller files later in the list still get a chance.
 
     Returns:
-        selected:  list of Path objects to scan (relative paths under root)
-        warnings:  human-readable notices about selection / capping
+        selected:     list of Path objects to scan (relative paths under root)
+        warnings:     human-readable notices about selection / capping
+        files_total:  eligible (non-junk, non-binary) files found
     """
     warnings: list[str] = []
     candidates: list[Path] = []
@@ -286,4 +293,4 @@ def filter_tree(root: Path) -> tuple[list[Path], list[str]]:
             f"(file cap of {SCAN_MAX_FILES} reached)."
         )
 
-    return selected, warnings
+    return selected, warnings, files_total

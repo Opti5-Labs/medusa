@@ -45,4 +45,7 @@ def _hermetic_limits(monkeypatch):
         for name, value in _DEFAULTS.items():
             if hasattr(mod, name):
                 monkeypatch.setattr(mod, name, value)
+    # Never call the real watsonx.ai from tests, even with a local .env.
+    monkeypatch.setattr("app.config.WATSONX_API_KEY", "")
+    monkeypatch.setattr("app.config.WATSONX_PROJECT_ID", "")
     yield

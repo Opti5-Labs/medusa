@@ -24,29 +24,22 @@ def _load_raw() -> dict:
         return json.load(fh)
 
 
-def load_demo_result() -> ScanResult:
+def load_demo() -> tuple[ScanResult, dict[str, str]]:
     """
-    Return a fresh ScanResult with a new scan_id and new issue ids each call.
-    The fixture data is cached in memory after the first read.
+    Return a fresh ScanResult plus {issue_id: scenario} for issues the
+    sandbox can reproduce. The fixture is cached after the first read.
     """
     raw = _load_raw()
+    issues: list[Issue] = []
+    scenarios: dict[str, str] = {}
+    for item in raw["issues"]:
+        fields = {k: v for k, v in item.items() if k not in ("id", "scenario")}
+        issue = Issue(id=str(uuid.uuid4()), **fields)  # always fresh
+        issues.append(issue)
+        if item.get("scenario"):
+            scenarios[issue.id] = item["scenario"]
 
-    issues = [
-        Issue(
-            id=str(uuid.uuid4()),  # always fresh — must be unique across scans
-            title=item["title"],
-            description=item["description"],
-            priority=item["priority"],
-            source=item["source"],
-            category=item.get("category"),
-            file=item.get("file"),
-            function=item.get("function"),
-            github_url=item.get("github_url"),
-        )
-        for item in raw["issues"]
-    ]
-
-    return ScanResult(
+    result = ScanResult(
         scan_id=str(uuid.uuid4()),
         repo_source="demo",
         language=raw["language"],
@@ -55,3 +48,8 @@ def load_demo_result() -> ScanResult:
         issues=issues,
         warnings=raw["warnings"],
     )
+    return result, scenarios
+
+
+def load_demo_result() -> ScanResult:
+    return load_demo()[0]

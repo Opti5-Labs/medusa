@@ -1,23 +1,32 @@
 """
-Scan pipeline interface.
+Scan pipeline.
 
-scan_tree(root, source) -> ScanResult
+    result = await scan_repo(root, source, extra_issues, deadline)
 
-Walks *root*, applies ingest limits, detects dominant language, reads files,
-and (when Granite is available) calls agents/granite.py for analysis.
+Walks *root*, applies ingest limits, detects the dominant language, then asks
+Granite to review the selected files in chunks (concurrently, max
+GRANITE_MAX_CONCURRENT_CHUNKS in flight). Files are read as text only.
 
-Until Granite exists, returns an empty issue list with a clear warning.
-Never fabricates issues.
+A chunk that fails or returns invalid JSON is skipped with a warning; a bad
+chunk never fails the scan. Chunks unfinished at the deadline are skipped the
+same way, so a slow model returns partial results instead of a timeout.
+Issues are never fabricated: without Granite the scan says so and lists none.
 """
 
+import ast
+import asyncio
 import logging
-import os
 import uuid
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from app.ingest.limits import filter_tree
+from pydantic import Field
+
+from app import config
+from app.agents import granite
+from app.ingest.limits import filter_tree_with_total
 from app.models.contracts import Issue, ScanResult
 
 log = logging.getLogger(__name__)
@@ -44,6 +53,9 @@ _LANG_MAP: dict[str, str] = {
     ".sh": "Shell",
 }
 
+_PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
+_CATEGORIES = {"security", "correctness", "performance", "maintainability"}
+
 
 def _detect_language(files: list[Path]) -> str:
     counts: Counter[str] = Counter()
@@ -56,39 +68,246 @@ def _detect_language(files: list[Path]) -> str:
     return counts.most_common(1)[0][0]
 
 
-def scan_tree(
+# ── Chunking ──────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Segment:
+    path: str  # repo-relative
+    start: int  # 1-based first line
+    lines: list[str]
+
+
+@dataclass
+class Chunk:
+    segments: list[Segment]
+
+    @property
+    def size(self) -> int:
+        return sum(len(s.lines) for s in self.segments)
+
+
+def _python_breaks(text: str) -> list[int]:
+    """0-based line indexes where top-level definitions start."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    return sorted({(n.lineno - 1) for n in tree.body if hasattr(n, "lineno")})
+
+
+def _generic_breaks(lines: list[str]) -> list[int]:
+    """Lines that start a top-level block in brace or indentation languages."""
+    return [
+        i
+        for i, line in enumerate(lines)
+        if line
+        and not line[0].isspace()
+        and line.strip() not in ("}", "};", ")", "end")
+    ]
+
+
+def split_file(path: str, text: str, limit: int) -> list[Segment]:
+    lines = text.splitlines()
+    if len(lines) <= limit:
+        return [Segment(path, 1, lines)]
+    breaks = _python_breaks(text) if path.endswith(".py") else _generic_breaks(lines)
+    segments: list[Segment] = []
+    start = 0
+    while start < len(lines):
+        end = min(start + limit, len(lines))
+        if end < len(lines):
+            # Cut at the last definition boundary inside the window, if any.
+            inside = [b for b in breaks if start < b < end]
+            if inside:
+                end = inside[-1]
+        segments.append(Segment(path, start + 1, lines[start:end]))
+        start = end
+    return segments
+
+
+def build_chunks(root: Path, files: list[Path], limit: int) -> list[Chunk]:
+    """Split long files, then pack small segments together up to *limit* lines."""
+    chunks: list[Chunk] = []
+    current = Chunk([])
+    budget = config.SCAN_MAX_LINES  # hard cap even if one file alone is larger
+    for f in files:
+        try:
+            text = f.read_text("utf-8", errors="replace")
+        except OSError:
+            continue
+        for seg in split_file(str(f.relative_to(root)), text, limit):
+            if budget <= 0:
+                break
+            if len(seg.lines) > budget:
+                seg.lines = seg.lines[:budget]
+            budget -= len(seg.lines)
+            if current.segments and current.size + len(seg.lines) > limit:
+                chunks.append(current)
+                current = Chunk([])
+            current.segments.append(seg)
+    if current.segments:
+        chunks.append(current)
+    return chunks
+
+
+def _render(chunk: Chunk) -> str:
+    parts = []
+    for seg in chunk.segments:
+        body = "\n".join(
+            f"{seg.start + i:>5} | {line}" for i, line in enumerate(seg.lines)
+        )
+        parts.append(f"### FILE: {seg.path}\n{body}")
+    return "\n\n".join(parts)
+
+
+# ── Granite analysis ──────────────────────────────────────────────────────────
+
+
+class _Finding(granite.LenientModel):
+    file: str
+    line: int | None = None
+    function: str | None = None
+    title: str
+    description: str
+    priority: str = "Medium"
+    category: str | None = None
+
+
+class _ChunkReview(granite.LenientModel):
+    issues: list[_Finding] = Field(default_factory=list)
+
+
+_SYSTEM = (
+    "You are a meticulous code reviewer. Report only real defects you can point to in "
+    "the code shown: bugs, security flaws, performance problems, or serious "
+    "maintainability risks. Do not report style nits or speculation. If there are no "
+    "real problems, return an empty list. Each issue: file (exactly as in the ### FILE "
+    "header), line (the numbered line), function (or null), title (under 80 chars), "
+    "description (what goes wrong and when, 1-3 sentences), priority (High, Medium or "
+    "Low), category (security, correctness, performance or maintainability). "
+    'Respond with a single JSON object only: {"issues": [...]}'
+)
+
+
+def _to_issue(f: _Finding, chunk: Chunk) -> Issue | None:
+    seg = next((s for s in chunk.segments if s.path == f.file), None)
+    if seg is None:  # model cited a file it was not shown
+        return None
+    line = f.line
+    if line is not None and not (seg.start <= line < seg.start + len(seg.lines)):
+        line = None
+    priority = (
+        f.priority.capitalize()
+        if f.priority.capitalize() in _PRIORITY_ORDER
+        else "Medium"
+    )
+    category = (
+        f.category.lower() if f.category and f.category.lower() in _CATEGORIES else None
+    )
+    return Issue(
+        id=str(uuid.uuid4()),
+        title=f.title.strip()[:120],
+        description=f.description.strip()[:1000],
+        priority=priority,  # type: ignore[arg-type]
+        source="scan",
+        category=category,  # type: ignore[arg-type]
+        file=seg.path,
+        function=(f.function or None) and f.function.strip()[:120],
+        line=line,
+    )
+
+
+async def _review_chunk(chunk: Chunk) -> list[Issue]:
+    review = await granite.chat_json(
+        _SYSTEM, _render(chunk), _ChunkReview, max_tokens=1500
+    )
+    return [i for f in review.issues if (i := _to_issue(f, chunk)) is not None]
+
+
+async def analyze(
+    root: Path, files: list[Path], deadline: float
+) -> tuple[list[Issue], list[str]]:
+    """Review *files* with Granite until *deadline* (loop time). Returns (issues, warnings)."""
+    chunks = await asyncio.to_thread(build_chunks, root, files, config.SCAN_CHUNK_LINES)
+    if not chunks:
+        return [], []
+    tasks = [asyncio.create_task(_review_chunk(c)) for c in chunks]
+    timeout = max(1.0, deadline - asyncio.get_running_loop().time())
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    for t in pending:
+        t.cancel()
+
+    issues: list[Issue] = []
+    failed = 0
+    last_error = ""
+    for t in done:
+        exc = t.exception()
+        if exc is None:
+            issues.extend(t.result())
+        else:
+            failed += 1
+            last_error = str(exc)
+    warnings: list[str] = []
+    if failed:
+        warnings.append(
+            f"{failed} of {len(chunks)} code chunks could not be analysed and were skipped ({last_error})"
+        )
+    if pending:
+        warnings.append(
+            f"{len(pending)} of {len(chunks)} code chunks were skipped because the scan time limit was reached."
+        )
+
+    seen: set[tuple[str | None, str]] = set()
+    unique: list[Issue] = []
+    for issue in sorted(
+        issues, key=lambda i: (_PRIORITY_ORDER[i.priority], i.file or "", i.line or 0)
+    ):
+        key = (issue.file, issue.title.lower())
+        if key not in seen:
+            seen.add(key)
+            unique.append(issue)
+    if len(unique) > config.SCAN_MAX_ISSUES:
+        warnings.append(
+            f"Showing the {config.SCAN_MAX_ISSUES} highest-priority of {len(unique)} issues found."
+        )
+        unique = unique[: config.SCAN_MAX_ISSUES]
+    return unique, warnings
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+
+async def scan_repo(
     root: Path,
     source: Literal["demo", "github", "zip"],
     extra_issues: list[Issue] | None = None,
+    deadline: float | None = None,
 ) -> ScanResult:
-    """
-    Walk *root*, apply limits, return a ScanResult.
-
-    *extra_issues* allows callers (e.g. github.py) to inject GitHub Issues
-    that are merged into the final result.
-
-    Granite analysis is not yet implemented; a warning is added to the result.
-    """
-    selected, warnings = filter_tree(root)
-
+    """Select files, analyse them with Granite when available, return a ScanResult."""
+    selected, warnings, total = await asyncio.to_thread(filter_tree_with_total, root)
     rel_paths = [str(f.relative_to(root)) for f in selected]
-    language = _detect_language(selected)
 
-    # Count total files in the tree (for files_total)
-    total = sum(len(files) for _, _, files in os.walk(root, followlinks=False))
-
-    issues: list[Issue] = list(extra_issues or [])
-    warnings.append(
-        "Code analysis is not available yet — Granite integration is pending. "
-        "Zero issues were found by automated analysis."
-    )
+    scan_issues: list[Issue] = []
+    if not selected:
+        warnings.append("No source files were found to analyse.")
+    elif not granite.is_configured():
+        warnings.append(
+            "Code analysis is unavailable: Granite is not configured on this server. "
+            "No issues were generated by automated analysis."
+        )
+    else:
+        if deadline is None:
+            deadline = asyncio.get_running_loop().time() + config.SCAN_TIMEOUT_S - 5
+        scan_issues, analysis_warnings = await analyze(root, selected, deadline)
+        warnings.extend(analysis_warnings)
 
     return ScanResult(
         scan_id=str(uuid.uuid4()),
         repo_source=source,
-        language=language,
+        language=_detect_language(selected),
         files_scanned=rel_paths,
         files_total=total,
-        issues=issues,
+        issues=[*scan_issues, *(extra_issues or [])],
         warnings=warnings,
     )

@@ -25,12 +25,15 @@ async function request<T>(
     headers,
   });
   if (!res.ok) {
-    let detail: string | undefined;
+    // Read the body once; it may be JSON ({"detail": ...}) or plain text.
+    const text = await res.text().catch(() => "");
+    let detail = text || res.statusText;
     try {
-      const json = await res.json();
-      detail = json?.detail ?? JSON.stringify(json);
+      const json = JSON.parse(text);
+      if (typeof json?.detail === "string") detail = json.detail;
+      else if (Array.isArray(json?.detail)) detail = json.detail.map((d: { msg?: string }) => d.msg).join("; ");
     } catch {
-      detail = await res.text().catch(() => res.statusText);
+      // not JSON: keep the text
     }
     throw new Error(detail || `HTTP ${res.status}`);
   }
@@ -38,9 +41,12 @@ async function request<T>(
 }
 
 // ── Types (mirror of backend/app/models/contracts.py) ────────────────────────
+// Optional Python fields arrive as null, so they are typed `T | null`.
 
 export type Priority = "Low" | "Medium" | "High";
 export type Mode = "sandboxed" | "reasoning";
+export type InvestigatorSource = "bob_replay" | "granite" | "unavailable";
+export type CandidateOrigin = "granite" | "prepared";
 
 export interface Issue {
   id: string;
@@ -48,10 +54,11 @@ export interface Issue {
   description: string;
   priority: Priority;
   source: "scan" | "github_issue";
-  category?: "security" | "correctness" | "performance" | "maintainability";
-  file?: string;
-  function?: string;
-  github_url?: string;
+  category: "security" | "correctness" | "performance" | "maintainability" | null;
+  file: string | null;
+  function: string | null;
+  line: number | null;
+  github_url: string | null;
 }
 
 export interface ScanResult {
@@ -64,29 +71,54 @@ export interface ScanResult {
   warnings: string[];
 }
 
+export type LogLevel = "info" | "warn" | "error" | "result";
+
 export interface LogEvent {
   ts: number;
   source: string;
-  level: "info" | "warn" | "error" | "result";
+  level: LogLevel;
   message: string;
 }
+
+export type ReproStatus = "running" | "reproduced" | "not_reproducible" | "plausible" | "error";
 
 export interface ReproAttempt {
   attempt_id: string;
   issue_id: string;
   mode: Mode;
-  status: "running" | "reproduced" | "not_reproducible" | "plausible" | "error";
+  status: ReproStatus;
   log: LogEvent[];
-  root_cause?: string;
-  confidence?: number;
+  root_cause: string | null;
+  confidence: number | null;
+  investigator_source: InvestigatorSource | null;
 }
+
+export interface TestResults {
+  passed: number;
+  failed: number;
+  total: number;
+  reproducer_fixed: boolean;
+  regressions: string[];
+}
+
+export interface PatchStats {
+  files_changed: number;
+  lines_added: number;
+  lines_removed: number;
+}
+
+export type SandboxStatus = "running" | "passed" | "failed" | "not_applicable";
 
 export interface FixAttempt {
   candidate_id: string;
   approach: string;
-  patch?: string;
-  sandbox_status: "running" | "passed" | "failed" | "not_applicable";
-  test_results?: { passed: number; failed: number; total: number };
+  patch: string | null;
+  sandbox_status: SandboxStatus;
+  test_results: TestResults | null;
+  patch_stats: PatchStats | null;
+  origin: CandidateOrigin | null;
+  attempts: number; // 2 when revised once after failing tests
+  error: string | null;
   active: boolean;
 }
 
@@ -100,6 +132,13 @@ export interface DebugSession {
 export interface Recommendation {
   candidate_id: string;
   reason: string;
+  verified: boolean;
+}
+
+/** Payload of the final `done` event on /api/debug/{session_id}/events. */
+export interface DebugDone {
+  session: DebugSession;
+  recommendation: Recommendation | null;
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -136,11 +175,11 @@ export const postRepro = (issueId: string) =>
 export const openReproStream = (attemptId: string): EventSource =>
   new EventSource(`${BASE}/api/repro/${attemptId}/events`);
 
-/** POST /api/issues/{issue_id}/debug */
-export const postDebug = (issueId: string, candidates: number) =>
+/** POST /api/issues/{issue_id}/debug — omit candidates for the server default. */
+export const postDebug = (issueId: string, candidates?: number) =>
   request<DebugSession>(`/api/issues/${issueId}/debug`, {
     method: "POST",
-    body: JSON.stringify({ candidates }),
+    body: JSON.stringify(candidates ? { candidates } : {}),
   });
 
 /**

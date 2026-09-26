@@ -10,6 +10,7 @@ instead of failing the whole scan.
 """
 
 import logging
+import uuid
 
 import httpx
 
@@ -88,13 +89,11 @@ async def fetch_github_issues(owner: str, repo: str) -> tuple[list[Issue], list[
         if "pull_request" in item:
             continue
 
-        import uuid
-
         issues.append(
             Issue(
                 id=str(uuid.uuid4()),
                 title=item.get("title", "(no title)"),
-                description=item.get("body") or "",
+                description=(item.get("body") or "")[:2000],
                 priority=_label_priority(item.get("labels", [])),
                 source="github_issue",
                 github_url=item.get("html_url"),

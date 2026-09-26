@@ -1,0 +1,21 @@
+{
+  "note": "Prepared fix candidates for the OptiLearn demo. Used only when Granite cannot generate candidates live. The UI labels them as prepared. Each file holds a full replacement for the target function.",
+  "candidates": [
+    {
+      "file": "a_minimal_guard.py",
+      "approach": "Minimal local fix: fall back to the public Hub id when the configured value is a missing local path"
+    },
+    {
+      "file": "b_validate_repo_id.py",
+      "approach": "Input validation: check the configured value with huggingface_hub before returning it"
+    },
+    {
+      "file": "c_always_default.py",
+      "approach": "Defensive default: return the bundled default model whenever nothing local is found"
+    },
+    {
+      "file": "d_normalise_path.py",
+      "approach": "Path normalisation: strip leading ./ from the configured value before returning it"
+    }
+  ]
+}

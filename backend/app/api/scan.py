@@ -25,14 +25,15 @@ from app.config import (
     RATE_WINDOW_SECONDS,
     SCAN_TIMEOUT_S,
 )
-from app.demo.loader import load_demo_result
+from app.demo.loader import load_demo
 from app.errors import MedusaError
-from app.ingest.github import ingest_github, parse_github_url
+from app.github.issues import fetch_github_issues
+from app.ingest.github import ingest_github, parse_github_location
 from app.ingest.zip_upload import ingest_zip
 from app.models.contracts import ScanResult
-from app.pipelines.scan import scan_tree
+from app.pipelines.scan import scan_repo
 from app.ratelimit import RateLimiter
-from app.store import RunStore
+from app.store import RunStore, StoreFullError
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +43,11 @@ router = APIRouter()
 _scan_limiter = RateLimiter(
     max_calls=RATE_SCANS_PER_WINDOW,
     window_seconds=RATE_WINDOW_SECONDS,
+    what="scans",
 )
+
+# Seconds kept back from the scan budget for storing and returning the result.
+_RESPONSE_MARGIN_S = 5
 
 
 # ── Request model ─────────────────────────────────────────────────────────────
@@ -76,6 +81,10 @@ def _get_store() -> RunStore:
     return _store
 
 
+def _deadline() -> float:
+    return asyncio.get_running_loop().time() + SCAN_TIMEOUT_S - _RESPONSE_MARGIN_S
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -88,54 +97,49 @@ async def scan(body: ScanRequest, request: Request) -> ScanResult:
     source="github" -> download public repo, scan, return ScanResult.
     """
     if body.source == "demo":
-        result = load_demo_result()
-        await _get_store().create(result.scan_id, None, result)
+        result, scenarios = load_demo()
+        # Demo records own no files; the store evicts the oldest instead of refusing.
+        await _get_store().create(result.scan_id, None, result, scenarios=scenarios)
         log.info("scan: demo scan_id=%s", result.scan_id)
         return result
 
-    # GitHub path is rate limited
+    # Validate before spending a rate-limit slot on a malformed URL
+    repo_url = body.repo_url or ""
+    owner, repo, ref, subdir = parse_github_location(repo_url)
     _scan_limiter.check(request)
 
-    repo_url = body.repo_url or ""
-    owner, repo, ref = parse_github_url(repo_url)
-
     tmp_dir: Path | None = None
+    deadline = _deadline()
 
     try:
         async with asyncio.timeout(SCAN_TIMEOUT_S):
             tmp_dir, extract_root = await ingest_github(repo_url)
-
-            # Optionally fetch GitHub Issues (non-fatal)
-            from app.github.issues import fetch_github_issues
-
             gh_issues, gh_warnings = await fetch_github_issues(owner, repo)
-
-            result = await asyncio.to_thread(
-                scan_tree, extract_root, "github", gh_issues
-            )
+            result = await scan_repo(extract_root, "github", gh_issues, deadline)
             result.warnings.extend(gh_warnings)
 
-            # Inform user if a specific branch was scanned
             if ref:
-                result.warnings.insert(0, f"Scanned branch/tag '{ref}' as requested.")
+                where = f"folder '{subdir}' on " if subdir else ""
+                result.warnings.insert(
+                    0, f"Scanned {where}branch/tag '{ref}' as requested."
+                )
 
-        await _get_store().create(result.scan_id, tmp_dir, result)
+        await _get_store().create(result.scan_id, tmp_dir, result, root=extract_root)
         tmp_dir = None  # store now owns it
         log.info(
             "scan: github owner=%s repo=%s scan_id=%s", owner, repo, result.scan_id
         )
         return result
 
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise MedusaError(
             504,
             f"Scan timed out after {SCAN_TIMEOUT_S} s. "
-            "Try a smaller repo or link to a specific subdirectory.",
+            "Try a smaller repo, or link to a folder: https://github.com/owner/repo/tree/main/src",
         ) from exc
     except MedusaError:
         raise
-    except RuntimeError as exc:
-        # store.create raises RuntimeError when the store is full (503)
+    except StoreFullError as exc:
         raise MedusaError(503, str(exc)) from exc
     except Exception:
         log.exception("scan: unexpected error for %s/%s", owner, repo)
@@ -160,26 +164,26 @@ async def scan_upload(file: UploadFile, request: Request) -> ScanResult:
     _scan_limiter.check(request)
 
     tmp_dir: Path | None = None
+    deadline = _deadline()
 
     try:
         async with asyncio.timeout(SCAN_TIMEOUT_S):
             tmp_dir, extract_root = await ingest_zip(file)
+            result = await scan_repo(extract_root, "zip", None, deadline)
 
-            result = await asyncio.to_thread(scan_tree, extract_root, "zip")
-
-        await _get_store().create(result.scan_id, tmp_dir, result)
+        await _get_store().create(result.scan_id, tmp_dir, result, root=extract_root)
         tmp_dir = None  # store now owns it
         log.info("scan: zip filename=%s scan_id=%s", file.filename, result.scan_id)
         return result
 
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise MedusaError(
             504,
             f"Scan timed out after {SCAN_TIMEOUT_S} s. Try a smaller zip.",
         ) from exc
     except MedusaError:
         raise
-    except RuntimeError as exc:
+    except StoreFullError as exc:
         raise MedusaError(503, str(exc)) from exc
     except Exception:
         log.exception("scan: unexpected error processing zip %s", file.filename)

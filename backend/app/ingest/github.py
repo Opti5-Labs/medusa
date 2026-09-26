@@ -16,6 +16,7 @@ Security:
     - GITHUB_TOKEN is never logged or echoed in error messages.
 """
 
+import asyncio
 import logging
 import re
 import shutil
@@ -49,28 +50,30 @@ _TREE_STRIP_RE = re.compile(r"/tree/[^/].*$")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]*$")
 
 
-def parse_github_url(url: str) -> tuple[str, str, str | None]:
+def parse_github_location(url: str) -> tuple[str, str, str | None, str | None]:
     """
     Parse and validate a GitHub URL.
 
-    Returns (owner, repo, ref) where ref is the branch/tag extracted from
-    a /tree/<ref> suffix, or None for the default branch.
+    Returns (owner, repo, ref, subdir). A /tree/<ref>/<path> suffix gives the
+    branch or tag (first segment) and an optional subdirectory to scan (the
+    rest). Branch names containing "/" are therefore not supported.
     Raises MedusaError(422) on invalid URLs.
     """
     url = url.strip().rstrip("/")
 
-    # Extract and validate optional /tree/<ref>
     ref: str | None = None
+    subdir: str | None = None
     tree_match = re.search(r"/tree/([^/].*)$", url)
     if tree_match:
-        raw_ref = tree_match.group(1).rstrip("/")
-        if not _REF_RE.match(raw_ref):
+        raw = tree_match.group(1).rstrip("/")
+        if not _REF_RE.match(raw) or ".." in raw.split("/"):
             raise MedusaError(
                 422,
-                "Branch or tag name in the URL contains invalid characters. "
+                "Branch, tag or folder name in the URL contains invalid characters. "
                 "Please use the repository root URL.",
             )
-        ref = raw_ref
+        ref, _, rest = raw.partition("/")
+        subdir = rest or None
         url = _TREE_STRIP_RE.sub("", url)
 
     m = _GITHUB_RE.match(url)
@@ -82,6 +85,12 @@ def parse_github_url(url: str) -> tuple[str, str, str | None]:
         )
     owner = m.group("owner")
     repo = m.group("repo").removesuffix(".git")
+    return owner, repo, ref, subdir
+
+
+def parse_github_url(url: str) -> tuple[str, str, str | None]:
+    """Returns (owner, repo, ref). See parse_github_location for subdirectories."""
+    owner, repo, ref, _ = parse_github_location(url)
     return owner, repo, ref
 
 
@@ -120,7 +129,7 @@ async def ingest_github(repo_url: str) -> tuple[Path, Path]:
     Raises MedusaError on any validation or network failure (tmp_dir already
     deleted before raising).
     """
-    owner, repo, ref = parse_github_url(repo_url)
+    owner, repo, ref, subdir = parse_github_location(repo_url)
 
     api_url = f"https://api.github.com/repos/{owner}/{repo}"
     ref_segment = f"/{ref}" if ref else ""
@@ -184,7 +193,7 @@ async def ingest_github(repo_url: str) -> tuple[Path, Path]:
                 raise MedusaError(
                     413,
                     f"Repository is ~{size_mb} MB; maximum is {cap_mb} MB. "
-                    "Try a smaller repo or link to a subdirectory.",
+                    "Try a smaller repository.",
                 )
 
             if meta.get("archived"):
@@ -211,6 +220,13 @@ async def ingest_github(repo_url: str) -> tuple[Path, Path]:
                                 )
                             next_url = location
                             continue
+                        if dl_resp.status_code == 404 and ref:
+                            raise MedusaError(
+                                422,
+                                f"Branch or tag '{ref}' was not found. Branch names "
+                                "containing '/' are not supported; use the repository "
+                                "root URL instead.",
+                            )
                         if dl_resp.status_code != 200:
                             raise MedusaError(
                                 502,
@@ -238,12 +254,18 @@ async def ingest_github(repo_url: str) -> tuple[Path, Path]:
         # ── Extract ───────────────────────────────────────────────────────────
         extract_dir = tmp_dir / "extracted"
         extract_dir.mkdir()
-        repo_root = extract_tarball(tarball_path, extract_dir)
+        # Extraction is CPU/disk bound: keep it off the event loop.
+        repo_root = await asyncio.to_thread(extract_tarball, tarball_path, extract_dir)
 
-        # Emit a warning if we scanned the default branch instead of the requested ref
-        # (warning is attached to the result by the caller via scan_tree)
         if ref:
             log.info("github: scanning ref=%s for %s/%s", ref, owner, repo)
+        if subdir:
+            target = (repo_root / subdir).resolve()
+            if not target.is_relative_to(repo_root.resolve()) or not target.is_dir():
+                raise MedusaError(
+                    422, f"Folder '{subdir}' was not found in the repository."
+                )
+            repo_root = target
 
         return tmp_dir, repo_root
 
