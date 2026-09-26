@@ -1,142 +1,181 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import DemoButton from "./components/DemoButton";
+import Icon, { type IconName } from "./components/Icon";
+import { readRecentScans, type RecentScan } from "../lib/recentScans";
 
-const STEPS = [
-  {
-    title: "Scan",
-    body: "Granite reviews the code and GitHub Issues are pulled in. If Granite is unavailable, IBM Bob reviews the code instead.",
-  },
-  {
-    title: "Reproduce",
-    body: "On the demo, a failing test runs against the original code in a locked-down container. Bob and Granite then diagnose the failure independently.",
-  },
-  {
-    title: "Debug race",
-    body: "When a sandbox harness exists, two to six candidate fixes from Bob, Granite and prepared strategies each run in their own sandbox, in parallel.",
-  },
-  {
-    title: "Verify and recommend",
-    body: "Plain code, not a model, checks each fix: reproducer fixed, no regressions, smallest change. The winner can be downloaded.",
-  },
-];
+const SOURCE_TILE = {
+  github: { icon: "github", tone: "" },
+  zip: { icon: "folder", tone: "cyan" },
+  demo: { icon: "cube", tone: "purple" },
+} as const;
 
-const ROLES = [
-  {
-    name: "IBM Bob",
-    body: "Reads the relevant files, traces the failure, proposes fixes. Read-only, capped at 0.25 Bobcoins and 6 turns per run.",
-  },
-  {
-    name: "Granite on watsonx.ai",
-    body: "Scans code in chunks and runs a second, independent investigation: runtime, repository and skeptic, then a synthesis.",
-  },
-  {
-    name: "The sandbox",
-    body: "The only place code runs: no network, no credentials, read-only, 90 seconds, then deleted. Its results decide what works.",
-  },
-];
+const HEADLINE = [["Clarity", "for", "your", "code."], ["Confidence", "in", "every", "fix."]];
+
+// Real public repositories (the same examples the GitHub scan page offers).
+const EXAMPLE_REPOS = ["pallets/itsdangerous", "pallets/markupsafe", "owner/repo"];
+const STATIC_PLACEHOLDER = "github.com/owner/repo";
+
+/**
+ * Types example repositories into the placeholder while the field is idle.
+ * Writes to the element directly so the page does not re-render per letter.
+ */
+function useTypedPlaceholder(input: RefObject<HTMLInputElement | null>, paused: boolean) {
+  useEffect(() => {
+    const setText = (text: string) => { if (input.current) input.current.placeholder = text; };
+    if (paused || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setText(STATIC_PLACEHOLDER);
+      return;
+    }
+    let example = 0;
+    let chars = 0;
+    let deleting = false;
+    let timer = 0;
+    const tick = () => {
+      const full = EXAMPLE_REPOS[example];
+      if (!deleting && chars === full.length) {
+        deleting = true;
+        timer = window.setTimeout(tick, 2400);
+        return;
+      }
+      if (deleting && chars === 0) {
+        deleting = false;
+        example = (example + 1) % EXAMPLE_REPOS.length;
+      }
+      chars += deleting ? -1 : 1;
+      setText("github.com/" + full.slice(0, chars));
+      timer = window.setTimeout(tick, deleting ? 30 : 70);
+    };
+    timer = window.setTimeout(tick, 1600);
+    return () => window.clearTimeout(timer);
+  }, [input, paused]);
+}
+
+/** Greeting for a local hour (0–23). The small hours still count as evening, not morning. */
+function greetingFor(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
 
 export default function Home() {
-  return (
-    <div className="space-y-20 sm:space-y-24">
-      {/* Hero */}
-      <section className="grid gap-10 lg:grid-cols-[1fr_1.05fr] lg:items-center">
-        <div className="space-y-6">
-          <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05] text-balance">
-            Find the bug, prove it, fix it.
-          </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-400 max-w-md leading-relaxed">
-            Medusa reproduces a defect in an isolated sandbox, races candidate fixes against the
-            tests, and recommends the one that actually passes.
-          </p>
+  const router = useRouter();
+  const [repository, setRepository] = useState("");
+  const [recent, setRecent] = useState<RecentScan[]>([]);
+  const [greeting, setGreeting] = useState("Welcome");
+  const [focused, setFocused] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  useTypedPlaceholder(input, focused || repository.length > 0);
+  const latest = recent[0];
 
-          <div className="space-y-3 pt-2">
-            <DemoButton />
-            <div className="flex flex-col sm:flex-row gap-3">
-              <EntryLink href="/scan/github" title="Link a GitHub repository" note="Public repos, up to 50 MB" />
-              <EntryLink href="/scan/upload" title="Upload a zip" note="Up to 20 MB" />
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 max-w-md">
-              The demo includes one sandboxed fix race and five real historical issues analysed as text.
-              Linked repositories and zips are marked as not executed.
+  useEffect(() => {
+    // The greeting follows the visitor's local clock and updates if a boundary
+    // passes while the page is open (checked each minute and on focus).
+    const refresh = () => {
+      setGreeting(greetingFor(new Date().getHours()));
+      setRecent(readRecentScans());
+    };
+    refresh();
+    const timer = window.setInterval(() => setGreeting(greetingFor(new Date().getHours())), 60_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
+  return (
+    <>
+      <div className="hero-stage">
+        <section className="dashboard-hero" aria-labelledby="welcome-heading">
+          <div className="hero-content">
+            <p className="eyebrow">{greeting}</p>
+            <h1 id="welcome-heading">
+              {HEADLINE.map((line, row) => (
+                <span key={row} className="line">
+                  {line.map((word, col) => (
+                    <span key={word}>
+                      <span className="word" style={{ "--i": row * 4 + col } as CSSProperties}>{word}</span>{col < line.length - 1 ? " " : ""}
+                    </span>
+                  ))}
+                  {row === 0 ? " " : ""}
+                </span>
+              ))}
+            </h1>
+            <p className="hero-description">
+              Medusa scans a repository for issues. IBM Bob and Granite then diagnose each one
+              independently and propose fixes. On the OptiLearn demo, every fix is tested in a sandbox.
             </p>
+            <form className="repository-launcher glass" onSubmit={(event) => {
+              event.preventDefault();
+              const value = repository.trim();
+              router.push(value ? `/scan/github?repo=${encodeURIComponent(value)}` : "/scan/github");
+            }}>
+              <Icon name="search" />
+              <label className="sr-only" htmlFor="dashboard-repository">GitHub repository URL</label>
+              <input id="dashboard-repository" value={repository} onChange={(event) => setRepository(event.target.value)} ref={input} placeholder={STATIC_PLACEHOLDER} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} autoComplete="off" spellCheck={false} />
+              <button className="launcher-submit" type="submit" aria-label="Scan this repository" disabled={!repository.trim()}><Icon name="arrow" /></button>
+            </form>
+            <p className="launcher-caption"><Icon name="shield" /> Public repositories only. Code is read as text and never run.</p>
           </div>
-        </div>
+          <DemoButton />
+        </section>
 
-        <Transcript />
-      </section>
+        <section className="quick-actions" aria-label="Start a scan">
+          <ActionCard href="/scan/github" title="Link a repository" description="Scan public GitHub code" icon="github" tone="" />
+          <ActionCard href="/scan/upload" title="Upload a zip" description="Scan an archive of your code" icon="upload" tone="cyan" />
+          {latest && <ActionCard href={`/issues?scan=${encodeURIComponent(latest.id)}`} title="Continue" description={latest.name} icon="history" tone="magenta" />}
+        </section>
+      </div>
 
-      {/* How a run works: a real sequence */}
-      <section className="space-y-8">
-        <h2 className="text-2xl font-semibold tracking-tight">How a run works</h2>
-        <ol className="grid gap-x-8 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
-          {STEPS.map((step, i) => (
-            <li key={step.title} className="space-y-2 border-t-2 border-gray-900 dark:border-gray-100 pt-4">
-              <p className="font-mono text-sm text-verdigris-700 dark:text-verdigris-300">{i + 1}</p>
-              <h3 className="font-semibold">{step.title}</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{step.body}</p>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      {/* Who does what */}
-      <section className="grid gap-8 lg:grid-cols-[1fr_2fr]">
-        <div className="space-y-3">
-          <h2 className="text-2xl font-semibold tracking-tight">Models investigate. Tests decide.</h2>
-          <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-            Bob and Granite never see each other&apos;s diagnosis, and their confidence is shown but
-            never used to pick a fix.
-          </p>
-        </div>
-        <dl className="divide-y divide-gray-200 dark:divide-gray-800 border-y border-gray-200 dark:border-gray-800">
-          {ROLES.map((role) => (
-            <div key={role.name} className="grid gap-1 sm:grid-cols-[11rem_1fr] sm:gap-6 py-4">
-              <dt className="font-medium">{role.name}</dt>
-              <dd className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{role.body}</dd>
+      <div className="dashboard-lower">
+        <section className="panel glass" id="recent-scans" aria-labelledby="recent-heading">
+          <div className="panel-heading">
+            <div><h2 id="recent-heading">Recent scans</h2><p>Pick up where you left off.</p></div>
+            {recent.length > 0 && <Link href="/recent" className="text-link">See all</Link>}
+          </div>
+          {recent.length ? (
+            <div className="recent-list">
+              {recent.map((scan) => (
+                <Link key={scan.id} href={`/issues?scan=${encodeURIComponent(scan.id)}`} className="recent-row">
+                  <span className={`tile ${SOURCE_TILE[scan.source].tone}`}><Icon name={SOURCE_TILE[scan.source].icon} /></span>
+                  <span className="recent-name"><strong>{scan.name}</strong><small>{scan.issues} {scan.issues === 1 ? "issue" : "issues"} · {scan.files} files analysed</small></span>
+                  <span className="recent-time">{new Date(scan.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  <Icon name="chevron" />
+                </Link>
+              ))}
             </div>
-          ))}
-        </dl>
-      </section>
-    </div>
+          ) : (
+            <div className="empty-state">
+              <span className="tile gray"><Icon name="folder" /></span>
+              <h3>No scans yet</h3>
+              <p>Scans you run in this tab appear here for 30 minutes.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="panel glass" aria-labelledby="intelligence-heading">
+          <div className="panel-heading">
+            <div><h2 id="intelligence-heading">Two investigators</h2><p>Neither sees the other&apos;s diagnosis.</p></div>
+          </div>
+          <div className="engine-row"><span className="tile"><Icon name="bob" /></span><div><strong>IBM Bob</strong><small>Reads the code, diagnoses, proposes fixes</small></div></div>
+          <div className="engine-row"><span className="tile cyan"><Icon name="granite" /></span><div><strong>Granite</strong><small>Scans for issues and diagnoses on its own</small></div></div>
+          <div className="engine-note"><Icon name="check" /><span><strong>Models investigate. Tests decide.</strong>Sandbox testing is available on the OptiLearn demo.</span></div>
+        </section>
+      </div>
+    </>
   );
 }
 
-function EntryLink({ href, title, note }: { href: string; title: string; note: string }) {
+function ActionCard({ href, title, description, icon, tone }: { href: string; title: string; description: string; icon: IconName; tone: string }) {
   return (
-    <Link
-      href={href}
-      className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-3 hover:border-gray-900 dark:hover:border-gray-300 transition-colors"
-    >
-      <span className="block font-medium">{title}</span>
-      <span className="block text-xs text-gray-500 dark:text-gray-400">{note}</span>
+    <Link href={href} className="action-card glass pressable" data-holo="glare">
+      <span className={`tile ${tone}`}><Icon name={icon} /></span>
+      <span className="action-copy"><strong>{title}</strong><small>{description}</small></span>
+      <span className="action-arrow"><Icon name="arrow" /></span>
     </Link>
-  );
-}
-
-/** The demo bug's real reproducer output: the moment Medusa exists for. */
-function Transcript() {
-  return (
-    <figure className="rounded-xl bg-gray-900 dark:bg-gray-900 text-gray-100 shadow-[0_1px_0_0_rgba(255,255,255,0.06)_inset] ring-1 ring-gray-800 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-gray-800 text-xs text-gray-400">OptiLearn sandbox, network off</div>
-      <pre className="px-4 py-4 font-mono text-[12.5px] leading-6 overflow-x-auto">
-        <code>
-          <span className="text-gray-400">$ run reproducer against original code{"\n"}</span>
-          <span className="text-gray-300">PASS  test_existing_local_folder_is_used{"\n"}</span>
-          <span className="text-gray-300">PASS  test_custom_hub_id_is_not_overridden{"\n"}</span>
-          <span className="verdict-line text-red-400" style={{ animationDelay: "250ms" }}>
-            FAIL  test_missing_local_whisper_path_resolves_to_valid_model{"\n"}
-          </span>
-          <span className="text-gray-500">      returned &apos;./models/whisper/openai-whisper-tiny&apos;{"\n"}</span>
-          <span className="text-gray-500">      not a folder, not a valid Hub id{"\n\n"}</span>
-          <span className="text-gray-400">$ run candidate c1 (+4 −0){"\n"}</span>
-          <span className="verdict-line text-emerald-400" style={{ animationDelay: "900ms" }}>
-            PASSED: reproducer fixed, 7/7 checks pass, no regressions
-          </span>
-        </code>
-      </pre>
-      <figcaption className="px-4 py-2.5 border-t border-gray-800 text-xs text-gray-400">
-        A real bug in OptiLearn&apos;s speech-to-text fallback, reproduced and fixed in the demo.
-      </figcaption>
-    </figure>
   );
 }

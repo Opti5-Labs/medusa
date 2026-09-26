@@ -56,14 +56,12 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     (async () => {
       try {
         const { default: mermaid } = await import("mermaid");
-        const prefersDark =
-          typeof window !== "undefined" &&
-          !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
           htmlLabels: false,
-          theme: prefersDark ? "dark" : "neutral",
+          // The app is dark-only, so the diagram always uses the dark theme.
+          theme: "dark",
           flowchart: { htmlLabels: false, useMaxWidth: true },
         });
         await mermaid.parse(source);
@@ -88,7 +86,7 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   if (failed) {
     return (
       <div className={className}>
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400 mb-2">
+        <p role="alert" className="field-error">
           The diagram could not be rendered. The information below is the same.
         </p>
         {fallback}
@@ -99,7 +97,7 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   if (!svg) {
     return (
       <div className={className}>
-        <p className="text-sm text-gray-400 dark:text-gray-600">Rendering diagram…</p>
+        <p className="field-hint">Rendering diagram…</p>
       </div>
     );
   }

@@ -1,0 +1,2 @@
+# Hash-checked artifacts: never convert line endings, or their recorded sha256 stops matching on Windows checkouts.
+backend/app/architecture/curated/** -text
