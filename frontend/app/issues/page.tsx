@@ -187,7 +187,15 @@ function IssuesContent() {
 
       {/* Header */}
       <div className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">Issues</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-2xl font-semibold tracking-tight">Issues</h2>
+          <Link
+            href={`/architecture?scan=${result.scan_id}`}
+            className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+          >
+            View project architecture
+          </Link>
+        </div>
         <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
           <div>
             <dt className="text-gray-500 dark:text-gray-400">Source</dt>
