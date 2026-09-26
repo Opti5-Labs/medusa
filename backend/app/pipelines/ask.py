@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from app import config
 from app.agents import bob, granite
+from app.demo.loader import load_issue_context
 from app.ingest.limits import (
     _CODE_SUFFIXES,
     _CONFIG_DOC_SUFFIXES,
@@ -76,8 +77,35 @@ STOPWORDS = frozenset(
         "happen",
         "work",
         "works",
+        "all",
+        "here",
+        "there",
+        "need",
+        "summary",
+        "summarise",
+        "summarize",
+        "overview",
+        "kind",
+        "have",
+        "some",
+        "any",
+        "give",
+        "show",
+        "list",
+        "want",
+        "know",
     }
 )
+_BOILERPLATE_PREFIXES = (
+    "license",
+    "licence",
+    "copying",
+    "notice",
+    "changelog",
+    "code_of_conduct",
+    "contributing",
+)
+_BOILERPLATE_SUFFIXES = frozenset({".lock", ".sum"})
 _WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 _CAMEL_RE = re.compile(r"[a-z][A-Z]")
 _LONG_WORD = 8
@@ -192,6 +220,19 @@ def question_terms(text: str) -> tuple[set[str], set[str]]:
     return plain, symbols
 
 
+def _is_boilerplate(base: str) -> bool:
+    return base.startswith(_BOILERPLATE_PREFIXES) or (
+        Path(base).suffix in _BOILERPLATE_SUFFIXES
+    )
+
+
+def _stem_named(base: str, question_lower: str) -> bool:
+    # "licence" and "license" are one word; LICENSE.md is named by "license"
+    stem = base.split(".", 1)[0].replace("licence", "license")
+    text = question_lower.replace("licence", "license")
+    return bool(stem) and re.search(rf"\b{re.escape(stem)}\b", text) is not None
+
+
 def score_file(
     display_path: str,
     text_lower: str,
@@ -201,8 +242,16 @@ def score_file(
     scoped_file: str | None,
 ) -> int:
     path_lower = display_path.lower()
+    base = path_lower.rsplit("/", 1)[-1]
+    named = path_lower in question_lower or base in question_lower
+    if _is_boilerplate(base):
+        named = named or (
+            base.startswith(_BOILERPLATE_PREFIXES) and _stem_named(base, question_lower)
+        )
+        if not named:
+            return 0
     score = 0
-    if path_lower in question_lower or path_lower.rsplit("/", 1)[-1] in question_lower:
+    if named:
         score += 100
     if scoped_file is not None and display_path == scoped_file:
         score += 60
@@ -217,6 +266,7 @@ class Picked:
     path: str
     text: str
     score: int
+    start: int = 1  # real 1-based line number of the first line of text
 
 
 def _fallback_paths(all_paths: list[str]) -> list[str]:
@@ -240,6 +290,7 @@ def pick_files(
     all_paths: list[str],
     question: str,
     issue: Issue | None,
+    bundled: list[Picked] | None = None,
 ) -> list[Picked]:
     source = question
     if issue is not None:
@@ -250,6 +301,15 @@ def pick_files(
 
     scored: list[Picked] = []
     bytes_read = 0
+    # bundled excerpts are already text (never read from a root) and small,
+    # so they are scored first and cannot be starved by the search budget
+    for item in bundled or []:
+        bytes_read += len(item.text.encode("utf-8"))
+        score = score_file(
+            item.path, item.text.lower(), question_lower, plain, symbols, scoped
+        )
+        if score > 0:
+            scored.append(Picked(item.path, item.text, score, item.start))
     for path in all_paths:
         if bytes_read >= config.ASK_MAX_SEARCH_BYTES:
             break
@@ -282,14 +342,15 @@ class Excerpt:
 
 def make_excerpts(picked: Picked, terms: set[str]) -> list[Excerpt]:
     lines = picked.text.splitlines()
+    first = picked.start
     if len(lines) <= _WHOLE_FILE_LINES:
-        return [Excerpt(picked.path, 1, lines)]
+        return [Excerpt(picked.path, first, lines)]
 
     lowered = [line.lower() for line in lines]
     hits = [i for i, line in enumerate(lowered) if any(t in line for t in terms)]
     hits = hits[:_MAX_WINDOWS]
     if not hits:
-        return [Excerpt(picked.path, 1, lines[:_HEAD_LINES])]
+        return [Excerpt(picked.path, first, lines[:_HEAD_LINES])]
 
     spans: list[list[int]] = []
     for i in hits:
@@ -298,7 +359,7 @@ def make_excerpts(picked: Picked, terms: set[str]) -> list[Excerpt]:
             spans[-1][1] = max(spans[-1][1], hi)
         else:
             spans.append([lo, hi])
-    return [Excerpt(picked.path, lo + 1, lines[lo : hi + 1]) for lo, hi in spans]
+    return [Excerpt(picked.path, first + lo, lines[lo : hi + 1]) for lo, hi in spans]
 
 
 def _size(excerpt: Excerpt) -> int:
@@ -371,6 +432,45 @@ _MODEL_WORDS = frozenset(
     }
 )
 _PUNCT = str.maketrans("", "", "?!.,;:")
+_ISSUE_NOUNS = frozenset(
+    {"issue", "issues", "problem", "problems", "bug", "bugs", "finding", "findings"}
+)
+_SUMMARY_TRIGGERS = (
+    "summary",
+    "summarise",
+    "summarize",
+    "overview",
+    "list",
+    "all",
+    "what kind",
+    "which",
+    "how many",
+    "any",
+    "found",
+    "here",
+    "there",
+    "give me",
+    "show me",
+)
+_CODE_WORDS = frozenset(
+    {"function", "functions", "line", "lines", "class", "classes", "code"}
+    | {"work", "works", "does"}
+)
+_PATH_RE = re.compile(
+    r"\S/\S|\.(?:py|js|jsx|ts|tsx|java|go|rs|rb|c|cpp|h|cs|php|md|json|ya?ml|toml)\b"
+)
+
+
+def _is_summary_request(raw: str, normalised: str, words: list[str]) -> bool:
+    if not _ISSUE_NOUNS & set(words) or _CODE_WORDS & set(words):
+        return False
+    padded = f" {normalised} "
+    if not any(f" {t} " in padded for t in _SUMMARY_TRIGGERS):
+        return False
+    # "caused", "fixes", "explained" are model words too
+    if any(w.startswith(tuple(_MODEL_WORDS)) for w in words):
+        return False
+    return _PATH_RE.search(raw.lower()) is None
 
 
 def classify(question: str, issue_id: str | None) -> Literal["issue_list", "model"]:
@@ -381,6 +481,9 @@ def classify(question: str, issue_id: str | None) -> Literal["issue_list", "mode
     if _MODEL_WORDS & set(normalised.replace("how many", "many").split()):
         return "model"
     if any(p.match(normalised) for p in _INSTANT_RES):
+        return "issue_list"
+    words = normalised.replace("how many", "many").split()
+    if _is_summary_request(question, normalised, words):
         return "issue_list"
     return "model"
 
@@ -689,10 +792,32 @@ class Attempt:
     unavailable: bool = False  # quota used up or not authorised: Bob may step in
 
 
+def bundled_demo_files(record: ScanRecord) -> list[Picked]:
+    """Real source bundled for the demo's other issues, with its real start line."""
+    if record.root is not None or record.result.repo_source != "demo":
+        return []
+    found: list[Picked] = []
+    seen: set[tuple[str, int, str]] = set()
+    for scenario in dict.fromkeys(record.scenarios.values()):
+        for key, text in load_issue_context(scenario).items():
+            path, _, line = key.partition("#L")
+            start = int(line) if line.isdigit() else 1
+            if (path, start, text) not in seen:
+                seen.add((path, start, text))
+                found.append(Picked(path, text, 0, start))
+    return found
+
+
 def _retrieve_sync(record: ScanRecord, question: str, issue: Issue | None) -> Retrieval:
     root, prefix = repo_root(record)
     paths = list_repo_files(root, prefix)
-    picked = pick_files(root, prefix, paths, question, issue)
+    bundled = bundled_demo_files(record)
+    # bundled keys are not under any root: only the map sees them, never read_file
+    map_paths = sorted(
+        dict.fromkeys([*paths, *(b.path for b in bundled)]),
+        key=lambda p: (_tier(p), p),
+    )
+    picked = pick_files(root, prefix, paths, question, issue, bundled)
     source = question
     if issue is not None:
         source = f"{question} {issue.title} {issue.description} {issue.function or ''}"
@@ -701,7 +826,7 @@ def _retrieve_sync(record: ScanRecord, question: str, issue: Issue | None) -> Re
     return Retrieval(
         picked=picked,
         excerpts=excerpts,
-        map_text=repo_map(paths),
+        map_text=repo_map(map_paths),
         truncated=truncated,
         files_read=list(dict.fromkeys(e.path for e in excerpts)),
         terms=terms,
@@ -892,9 +1017,23 @@ async def _bob_answer(
         "ask", "info", "Granite is unavailable, asking IBM Bob instead (read-only)"
     )
     files = {p.path: p.text for p in retrieval.picked}
-    answer = await bob.ask(
-        _bob_prompt(record, issue, question, retrieval, sandbox), files, BobQA
-    )
+    bob_ranges: dict[str, list[tuple[int, int]]] = {}
+    for p in retrieval.picked:
+        last = p.start + max(1, len(p.text.splitlines())) - 1
+        bob_ranges.setdefault(p.path, []).append((p.start, last))
+    try:
+        answer = await bob.ask(
+            _bob_prompt(record, issue, question, retrieval, sandbox), files, BobQA
+        )
+    except Exception as exc:  # noqa: BLE001 - CancelledError still propagates
+        name = type(exc).__name__
+        log.warning("ask: IBM Bob could not start (%s)", name)
+        return await _fail(
+            run,
+            question,
+            issue,
+            _nobody_could(granite_reason, f"IBM Bob could not start ({name})."),
+        )
     if answer.status != "ok" or not isinstance(answer.data, BobQA):
         return await _fail(
             run,
@@ -910,9 +1049,7 @@ async def _bob_answer(
         issue,
         retrieval,
         answer.data.answer,
-        ranges={
-            p.path: [(1, max(1, len(p.text.splitlines())))] for p in retrieval.picked
-        },
+        ranges=bob_ranges,
         answered_by="bob",
         grounding="sandbox_verified" if sandbox is not None else "reasoning",
         cost=answer.cost,

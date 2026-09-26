@@ -82,6 +82,10 @@ INSTANT = [
     "Any issues?",
     "how many issues are there",
     "Bugs",
+    "what are all the issues here? please i need a summary",
+    "What kind of issues do we have here? I need a summary",
+    "give me an overview of the bugs",
+    "summarise the problems found",
 ]
 
 MODEL = [
@@ -97,6 +101,9 @@ MODEL = [
     "what are the issues in utils.py",
     "hello",
     "",
+    "summary of how the cache bug happens",
+    "list the issues in feature1.py",
+    "why are there so many issues",
 ]
 
 
@@ -281,6 +288,43 @@ def test_fallback_picks_readme_first_then_entry_points(tmp_path: Path) -> None:
     assert all(p.score == 0 for p in picked)
 
 
+def _licence_repo(root: Path) -> list[str]:
+    _write(root, "LICENSE", "Licence terms: permission is granted to everyone.\n")
+    _write(root, "main.py", "def run():\n    return 1\n")
+    return ask.list_repo_files(root, "")
+
+
+def test_licence_is_picked_only_when_the_question_names_it(tmp_path: Path) -> None:
+    paths = _licence_repo(tmp_path)
+    named = ask.pick_files(tmp_path, "", paths, "what are the licence terms", None)
+    assert named[0].path == "LICENSE"
+    other = ask.pick_files(tmp_path, "", paths, "what does main do", None)
+    assert [p.path for p in other] == ["main.py"]
+
+
+@pytest.mark.parametrize(
+    "path", ["CHANGELOG.md", "Notice.txt", "poetry.lock", "go.sum", "sub/COPYING"]
+)
+def test_boilerplate_files_score_zero_unless_named(path: str) -> None:
+    text = "summary terms release notes"
+    assert (
+        ask.score_file(path, text, "give release notes", {"release"}, set(), None) == 0
+    )
+    named = ask.score_file(path, text, f"read {path.lower()}", set(), set(), None)
+    assert named >= 100
+
+
+async def test_summary_question_is_instant_and_reads_no_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _fake_model(monkeypatch)
+    q = "what are all the issues here? please i need a summary"
+    _, events = await _run(RunStore(), _repo(tmp_path), q)
+    answer = _final(events)
+    assert fake.prompts == [] and answer.files_read == []
+    assert answer.answered_by == "scan"
+
+
 def test_question_terms() -> None:
     plain, symbols = ask.question_terms(
         "What does parseConfig do in the settings module, with max_retries?"
@@ -407,6 +451,123 @@ def test_demo_record_maps_to_the_bundled_source() -> None:
         root, prefix, paths, "How does the Whisper model get loaded?", None
     )
     assert picked[0].path == "optilearn/app/services/whisper_client.py"
+
+
+# ── bundled demo issue files ──────────────────────────────────────────────────
+
+BUNDLED_PATH = "optilearn/app/api/routes/widgets.py"
+BUNDLED_TEXT = "\n".join(
+    ["# context line", "def compute_widget_total(items):", "    return sum(items)"]
+    + [f"# tail {i}" for i in range(6)]
+)
+
+
+def _demo_bundled(
+    monkeypatch: pytest.MonkeyPatch,
+    contexts: dict[str, dict[str, str]] | None = None,
+) -> tuple[ScanRecord, list[str]]:
+    contexts = contexts or {"widget_scenario": {f"{BUNDLED_PATH}#L250": BUNDLED_TEXT}}
+    calls: list[str] = []
+
+    def fake_context(scenario: str) -> dict[str, str]:
+        calls.append(scenario)
+        return contexts.get(scenario, {})
+
+    monkeypatch.setattr(ask, "load_issue_context", fake_context)
+    issue = _issue(1, file=BUNDLED_PATH, line=251, function="compute_widget_total")
+    record = _record([issue], source="demo", root=None)
+    record.scenarios = {"i1": "widget_scenario", "i2": "optilearn_whisper_scenario"}
+    return record, calls
+
+
+def test_bundled_file_is_picked_by_function_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, _ = _demo_bundled(monkeypatch)
+    r = ask._retrieve_sync(record, "why does compute_widget_total misbehave?", None)
+    assert r.picked[0].path == BUNDLED_PATH
+    assert BUNDLED_PATH in r.files_read
+    assert BUNDLED_PATH in r.map_text
+    assert (r.excerpts[0].path, r.excerpts[0].start) == (BUNDLED_PATH, 250)
+
+
+def test_bundled_excerpt_shows_real_lines_and_citations_follow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, _ = _demo_bundled(monkeypatch)
+    r = ask._retrieve_sync(record, "why does compute_widget_total misbehave?", None)
+    prompt = ask.build_user_prompt(
+        record, None, "q", r.excerpts, r.map_text, r.truncated, [], None
+    )
+    assert f"### FILE: {BUNDLED_PATH}\n  250 | # context line\n  251 | def" in prompt
+    text = f"Bug at [{BUNDLED_PATH}:251] not [{BUNDLED_PATH}:10]."
+    out, cites, dropped = ask._validate_citations(text, ask._ranges_of(r.excerpts))
+    assert out == f"Bug at [{BUNDLED_PATH}:251] not [{BUNDLED_PATH}]."
+    assert [(c.file, c.line) for c in cites] == [
+        (BUNDLED_PATH, 251),
+        (BUNDLED_PATH, None),
+    ]
+    assert dropped == 1
+
+
+def test_issue_scoped_question_picks_its_bundled_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, _ = _demo_bundled(monkeypatch)
+    r = ask._retrieve_sync(record, "what is wrong here", record.result.issues[0])
+    assert r.picked[0].path == BUNDLED_PATH and r.picked[0].start == 250
+
+
+def test_whisper_file_is_still_found_with_bundled_files_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, _ = _demo_bundled(monkeypatch)
+    r = ask._retrieve_sync(record, "How does the Whisper model get loaded?", None)
+    assert r.picked[0].path == "optilearn/app/services/whisper_client.py"
+    assert "optilearn/app/services/whisper_client.py" in r.files_read
+
+
+def test_duplicate_bundled_excerpts_are_dropped_distinct_ones_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    same = {f"{BUNDLED_PATH}#L250": BUNDLED_TEXT}
+    other = {f"{BUNDLED_PATH}#L900": "def compute_widget_total(): pass"}
+    record, _ = _demo_bundled(monkeypatch, {"a": same, "b": same, "c": other})
+    record.scenarios = {"i1": "a", "i2": "b", "i3": "c"}
+    found = ask.bundled_demo_files(record)
+    assert [(p.path, p.start) for p in found] == [
+        (BUNDLED_PATH, 250),
+        (BUNDLED_PATH, 900),
+    ]
+
+
+@pytest.mark.parametrize("source", ["github", "zip"])
+def test_general_repos_never_load_bundled_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    record, calls = _demo_bundled(monkeypatch)
+    record.result.repo_source = source  # type: ignore[assignment]
+    record.root = tmp_path
+    _write(tmp_path, "a.py", "def compute_widget_total(): pass\n")
+    r = ask._retrieve_sync(record, "compute_widget_total", None)
+    assert calls == [] and r.files_read == ["a.py"]
+
+
+def test_real_bundled_data_answers_the_translation_cache_key_question() -> None:
+    from app.demo.loader import load_demo
+
+    result, scenarios = load_demo()
+    record = ScanRecord(
+        scan_id=result.scan_id,
+        tmp_dir=None,
+        result=result,
+        root=None,
+        scenarios=scenarios,
+    )
+    r = ask._retrieve_sync(record, "translation cache key", None)
+    # a real source file (generated_cache.py) may legitimately rank above it
+    assert "optilearn/app/api/routes/feature1.py" in [p.path for p in r.picked]
+    assert "optilearn/app/api/routes/feature1.py" in r.files_read
 
 
 # ── redaction ─────────────────────────────────────────────────────────────────
@@ -1036,6 +1197,23 @@ async def test_bob_error_names_both_reasons(
         "Neither model could answer. Granite: quota used up. Bob: Bob timed out",
     )
     assert len(fake_bob.calls) == 1
+
+
+async def test_bob_launch_failure_is_reported_not_unexpected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
+    _fake_bob(monkeypatch)
+
+    async def boom(prompt, files, schema, timeout_s=None) -> BobAnswer:
+        raise NotImplementedError
+
+    monkeypatch.setattr(ask.bob, "ask", boom)
+    run, events = await _run(RunStore(), _repo(tmp_path))
+    error = _final(events).error or ""
+    assert "Neither model could answer" in error and "could not start" in error
+    assert "NotImplementedError" in error and "Unexpected error" not in error
+    assert error in _logs(run, "error")
 
 
 async def test_bob_citations_are_validated_against_the_picked_files(
