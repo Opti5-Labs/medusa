@@ -23,6 +23,7 @@ from app.ingest.github import _parse_github_url, ingest_github, parse_github_url
     "url,expected",
     [
         ("https://github.com/owner/repo", ("owner", "repo")),
+        ("github.com/owner/repo", ("owner", "repo")),  # scheme is optional
         ("https://github.com/owner/repo.git", ("owner", "repo")),
         ("https://github.com/owner/repo/", ("owner", "repo")),
         ("https://github.com/owner/repo/tree/main", ("owner", "repo")),

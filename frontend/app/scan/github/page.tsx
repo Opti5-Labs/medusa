@@ -10,6 +10,12 @@ import AssessingStatus from "../../components/AssessingStatus";
 const GITHUB_URL_RE =
   /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*(\.git|\/)?$/;
 
+// Mirrors the server: a bare "github.com/owner/repo" is assumed to be https.
+function normalizeGithubUrl(value: string): string {
+  const trimmed = value.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 // The steps /api/scan really runs for a linked repository.
 const SCAN_STEPS = [
   "Downloading the repository",
@@ -31,9 +37,9 @@ export default function ScanGitHubPage() {
   const abortRef = useRef<AbortController | null>(null);
 
   function validateUrl(value: string): boolean {
-    const trimmed = value.trim().replace(/\/tree\/.*$/, "").replace(/\/$/, "");
-    if (!GITHUB_URL_RE.test(trimmed)) {
-      setUrlError("Enter a valid public GitHub URL: https://github.com/owner/repo");
+    const normalized = normalizeGithubUrl(value).replace(/\/tree\/.*$/, "").replace(/\/$/, "");
+    if (!GITHUB_URL_RE.test(normalized)) {
+      setUrlError("Enter a valid public GitHub URL, e.g. github.com/owner/repo");
       return false;
     }
     setUrlError(null);
@@ -50,7 +56,7 @@ export default function ScanGitHubPage() {
 
     try {
       const result: ScanResult = await postScan(
-        { source: "github", repo_url: url.trim() },
+        { source: "github", repo_url: normalizeGithubUrl(url) },
         abortRef.current.signal
       );
       sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
@@ -105,7 +111,7 @@ export default function ScanGitHubPage() {
               if (urlError) validateUrl(e.target.value);
             }}
             onBlur={() => url && validateUrl(url)}
-            placeholder="https://github.com/owner/repo"
+            placeholder="github.com/owner/repo"
             disabled={stage === "scanning"}
             aria-describedby={urlError ? "url-error" : undefined}
             aria-invalid={!!urlError}
