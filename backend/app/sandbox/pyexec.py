@@ -4,8 +4,8 @@ Execution of general Python repositories (ARBITRARY_EXECUTION, off by default).
 This is the one place Medusa runs code from a linked repo or uploaded zip, and
 it only does so when the server enables it. Two phases per repository:
 
-    env = await prepare(code_dir, on_line)          # install deps (PyPI-only)
-    run = await run_tests(env, code_dir, on_line,   # repo's tests, network off
+    env = await prepare(code_dir, on_line)          # snapshot + install deps (PyPI-only)
+    run = await run_tests(env, on_line,             # repo's tests, network off
                           patch=..., repro_test=...)
     await release(env)
 
@@ -25,6 +25,7 @@ Test phase: no network at all. Patches are applied inside the container.
 import asyncio
 import json
 import logging
+import os
 import shutil
 import tempfile
 import time
@@ -102,6 +103,7 @@ class Group:
 @dataclass
 class ExecEnv:
     volume: str  # the dependency volume, mounted at /deps
+    code_dir: Path  # this run's own readable snapshot of the repo, mounted at /code
     installed: list[str] = field(default_factory=list)
     install_errors: list[str] = field(default_factory=list)
 
@@ -298,11 +300,42 @@ async def _run(
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+def _snapshot(src: Path) -> Path:
+    """
+    A private copy of the repo that the sandbox user can read: callers' temp
+    dirs are 0700, which the unprivileged container user cannot open. Symlinks
+    are copied as links (never followed), and the copy cannot change between
+    the install and test phases.
+    """
+    parent = Path(tempfile.mkdtemp(prefix="medusa_exec_code_"))
+    parent.chmod(0o755)
+    dest = parent / "code"
+    shutil.copytree(src, dest, symlinks=True)
+    for root, dirs, files in os.walk(dest):
+        for name in dirs:
+            path = Path(root) / name
+            if not path.is_symlink():
+                path.chmod(0o755)
+        for name in files:
+            path = Path(root) / name
+            if not path.is_symlink():
+                path.chmod(0o755 if path.stat().st_mode & 0o111 else 0o644)
+    dest.chmod(0o755)
+    return dest
+
+
 async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
-    """Install the repo's dependencies into a fresh capped volume. Never raises."""
+    """Snapshot the repo and install its dependencies into a new volume. Never raises."""
     if (reason := await asyncio.to_thread(unavailable_reason)) is not None:
         return PrepareResult(None, reason)
     volume = f"medusa-deps-{uuid.uuid4().hex[:12]}"
+    try:
+        snapshot = await asyncio.to_thread(_snapshot, code_dir)
+    except OSError as exc:
+        return PrepareResult(
+            None, f"the repository could not be copied for the sandbox: {exc.strerror}"
+        )
+    env = ExecEnv(volume=volume, code_dir=snapshot)
     try:
         client = await asyncio.to_thread(_client)
         await asyncio.to_thread(_ensure_egress, client)
@@ -311,6 +344,7 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
         await asyncio.to_thread(client.volumes.create, name=volume, driver="local")
     except Exception as exc:
         log.exception("pyexec: could not prepare the environment")
+        await release(env)
         return PrepareResult(
             None, f"the sandbox could not be prepared: {type(exc).__name__}"
         )
@@ -318,12 +352,11 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
     await on_line("Installing the repository's dependencies (PyPI only)")
     async with _semaphore():
         line, error = await _run(
-            install_kwargs(code_dir, volume),
+            install_kwargs(env.code_dir, volume),
             config.EXEC_INSTALL_TIMEOUT_S,
             _INSTALL_PREFIX,
             on_line,
         )
-    env = ExecEnv(volume=volume)
     if error:
         await release(env)
         return PrepareResult(None, f"Installing dependencies failed: {error}")
@@ -335,7 +368,6 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
 
 async def run_tests(
     env: ExecEnv,
-    code_dir: Path,
     on_line: LineCallback,
     *,
     patch: str | None = None,
@@ -359,7 +391,7 @@ async def run_tests(
             f.chmod(0o644)
         async with _semaphore():
             line, error = await _run(
-                test_kwargs(code_dir, env.volume, inputs),
+                test_kwargs(env.code_dir, env.volume, inputs),
                 config.EXEC_TEST_TIMEOUT_S,
                 _RESULT_PREFIX,
                 on_line,
@@ -374,7 +406,8 @@ async def run_tests(
 
 
 async def release(env: ExecEnv) -> None:
-    """Delete the dependency volume. Never raises."""
+    """Delete the dependency volume and the code snapshot. Never raises."""
+    shutil.rmtree(env.code_dir.parent, ignore_errors=True)
     try:
         client = await asyncio.to_thread(_client)
         vol = await asyncio.to_thread(client.volumes.get, env.volume)
