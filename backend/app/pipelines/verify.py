@@ -2,11 +2,13 @@
 Deterministic verification and ranking. No LLM decides whether a patch works.
 
     results = evaluate(baseline, candidate_run)   # original vs patched sandbox runs
+    results = evaluate_exec(baseline, candidate)  # the same for general repos (pyexec)
     rec = recommend_verified(candidates)          # sandboxed mode
     rec = recommend_unverified(candidates)        # reasoning mode, clearly labelled
 """
 
 from app.models.contracts import FixAttempt, Recommendation, TestResults
+from app.sandbox.pyexec import TestRun
 from app.sandbox.runner import SandboxResult
 
 
@@ -20,6 +22,29 @@ def evaluate(baseline: SandboxResult, patched: SandboxResult) -> TestResults:
         failed=patched.reproducer.failed + patched.suite.failed,
         total=patched.reproducer.total + patched.suite.total,
         reproducer_fixed=patched.reproducer_passed,
+        regressions=regressions,
+    )
+
+
+def evaluate_exec(baseline: TestRun, patched: TestRun) -> TestResults:
+    """
+    Compare a patched general-repo run with the original. A test module that
+    stops importing is a regression too: its tests vanish rather than fail.
+    """
+    before_failures = set(baseline.suite.failures)
+    before_broken = set(baseline.collection_errors)
+    regressions = [f for f in patched.suite.failures if f not in before_failures]
+    regressions += [
+        f"{e} (no longer imports)"
+        for e in patched.collection_errors
+        if e not in before_broken and "test_medusa_repro" not in e
+    ]
+    r, s = patched.reproducer, patched.suite
+    return TestResults(
+        passed=r.passed + s.passed,
+        failed=r.failed + r.errors + s.failed + s.errors,
+        total=r.total + s.total,
+        reproducer_fixed=patched.repro_outcome == "passed",
         regressions=regressions,
     )
 

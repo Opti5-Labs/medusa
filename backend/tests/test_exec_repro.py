@@ -315,3 +315,148 @@ async def test_execution_off_keeps_todays_behaviour(client, monkeypatch, drafts)
     assert done["status"] == "plausible"
     assert any("turned off on this server" in e["message"] for e in logs)
     assert drafts == []
+
+
+# ── The debug race on general repos (slice 3) ─────────────────────────────────
+
+_FIX = "--- a/calc/__init__.py\n+++ b/calc/__init__.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
+_BAD = "--- a/calc/__init__.py\n+++ b/calc/__init__.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return 5\n"
+_STALE = "--- a/calc/nope.py\n+++ b/calc/nope.py\n@@ -1 +1 @@\n-x\n+y\n"
+
+
+@pytest.fixture
+def race(monkeypatch, sandbox, drafts):
+    """Reproduce yields a failing test; each patch's sandbox result is scripted."""
+    from app.agents.results import CandidateFix
+    from app.pipelines import repro
+
+    state = {"bob_patches": [_FIX], "prepares": 0}
+    runs = {
+        None: ("failed", [], []),  # the reproduce run on the original code
+        _FIX: ("passed", [], []),
+        _BAD: ("passed", ["tests/test_calc.py::test_zero"], []),
+        _STALE: None,  # does not apply
+    }
+
+    async def fake_investigate(prompt, files):
+        return InvestigatorResult(
+            investigator="bob",
+            status="ok",
+            root_cause="add subtracts",
+            confidence=0.7,
+            candidate_fixes=[
+                CandidateFix(approach=f"fix {i}", patch=p)
+                for i, p in enumerate(state["bob_patches"])
+            ],
+        )
+
+    async def prepare(code_dir, on_line):
+        state["prepares"] += 1
+        return pyexec.PrepareResult(pyexec.ExecEnv(volume="v", code_dir=code_dir))
+
+    async def run_tests(env, on_line, *, patch=None, repro_test=None, select=None):
+        assert repro_test == _GOOD_TEST  # every patch faces the reproducer
+        if runs[patch] is None:
+            return pyexec.TestRun(
+                ok=True, patch_applied=False, patch_error="no such file"
+            )
+        outcome, failures, broken = runs[patch]
+        return pyexec.TestRun(
+            ok=True,
+            patch_applied=patch is not None or None,
+            repro_outcome=outcome,
+            reproducer=pyexec.Group(
+                passed=outcome == "passed", failed=outcome == "failed", total=1
+            ),
+            suite=pyexec.Group(
+                passed=1 - len(failures),
+                failed=len(failures),
+                total=1,
+                failures=failures,
+            ),
+            collection_errors=broken,
+        )
+
+    monkeypatch.setattr(repro.panel.bob, "investigate", fake_investigate)
+    monkeypatch.setattr(repro.pyexec, "prepare", prepare)
+    monkeypatch.setattr(repro.pyexec, "run_tests", run_tests)
+    return state
+
+
+async def _debug(client, issue_id):
+    session = (
+        await client.post(f"/api/issues/{issue_id}/debug", json={"candidates": 2})
+    ).json()
+    logs, done = await _events(client, f"/api/debug/{session['session_id']}/events")
+    return session, logs, done
+
+
+async def test_a_patch_that_fixes_the_reproducer_is_verified(client, race):
+    issue_id = await _issue_in_uploaded_repo(client)
+    _, repro_done = await _repro(client, issue_id)
+    assert repro_done["status"] == "reproduced"
+
+    session, _, done = await _debug(client, issue_id)
+    assert session["mode"] == "sandboxed"
+    c1, c2 = done["session"]["candidates"]
+    assert (c1["origin"], c1["sandbox_status"]) == ("bob", "passed")
+    assert c1["test_results"]["reproducer_fixed"] is True
+    assert c2["sandbox_status"] == "failed"  # Granite is not configured in tests
+    rec = done["recommendation"]
+    assert rec["candidate_id"] == "c1" and rec["verified"] is True
+    assert race["prepares"] == 2  # once for reproduce, once for the race
+
+    patch = await client.get(
+        f"/api/debug/{session['session_id']}/patch?candidate_id=c1"
+    )
+    assert "Verified in Medusa's sandbox" in patch.text
+    zipped = await client.get(
+        f"/api/debug/{session['session_id']}/download?candidate_id=c1"
+    )
+    assert zipped.status_code == 409 and ".patch" in zipped.text
+
+
+@pytest.mark.parametrize(
+    ("patch", "error"),
+    [
+        (_BAD, "1 regression(s): tests/test_calc.py::test_zero"),
+        (_STALE, "Patch does not apply: no such file"),
+    ],
+)
+async def test_failing_patches_are_never_recommended(client, race, patch, error):
+    race["bob_patches"] = [patch]
+    issue_id = await _issue_in_uploaded_repo(client)
+    await _repro(client, issue_id)
+    _, _, done = await _debug(client, issue_id)
+    c1 = done["session"]["candidates"][0]
+    assert c1["sandbox_status"] == "failed" and error in c1["error"]
+    assert done["recommendation"] is None
+
+
+async def test_without_a_failing_reproducer_patches_stay_untested(client, race):
+    issue_id = await _issue_in_uploaded_repo(client)
+    session, _, done = await _debug(client, issue_id)  # no reproduce run first
+    assert session["mode"] == "reasoning"
+    assert all(
+        c["sandbox_status"] == "not_applicable" for c in done["session"]["candidates"]
+    )
+    assert done["recommendation"]["verified"] is False
+    assert race["prepares"] == 0
+
+
+def test_a_test_module_that_stops_importing_is_a_regression():
+    from app.pipelines import verify
+
+    baseline = pyexec.TestRun(ok=True, suite=pyexec.Group(passed=2, total=2))
+    patched = pyexec.TestRun(
+        ok=True,
+        repro_outcome="passed",
+        reproducer=pyexec.Group(passed=1, total=1),
+        suite=pyexec.Group(passed=1, total=1),
+        collection_errors=["tests/test_io.py"],
+    )
+    r = verify.evaluate_exec(baseline, patched)
+    assert r.reproducer_fixed and r.regressions == [
+        "tests/test_io.py (no longer imports)"
+    ]
+    assert not verify.is_passing(r)

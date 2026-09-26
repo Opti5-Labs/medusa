@@ -76,14 +76,25 @@ async def function_candidate(
 
 
 async def diff_candidate(
-    issue: Issue, root_cause: str, files: dict[str, str], strategy: str
+    issue: Issue,
+    root_cause: str,
+    files: dict[str, str],
+    strategy: str,
+    *,
+    tested: bool = False,
 ) -> DiffCandidate:
     """Raises GraniteError."""
+    use = (
+        "The patch will be applied with `git apply` from the repository root and "
+        "tested, so file paths and context lines must match the files exactly."
+        if tested
+        else "The patch will be reviewed by a human, not executed."
+    )
     return await chat_json(
         "You propose a fix as a unified diff (---/+++ headers, @@ hunks) against the "
-        f"files shown, using this strategy: {strategy}. The patch will be reviewed by a "
-        "human, not executed. Fields: approach (one sentence), patch (unified diff "
-        "text), explanation (why it fixes the root cause). " + _JSON_ONLY,
+        f"files shown, using this strategy: {strategy}. {use} Fields: approach (one "
+        "sentence), patch (unified diff text), explanation (why it fixes the root "
+        "cause). " + _JSON_ONLY,
         f"Issue: {issue.title}\n{issue.description}\n\nRoot cause: {root_cause}\n\n"
         f"Source code:\n{format_sources(files)}",
         DiffCandidate,

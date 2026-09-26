@@ -22,7 +22,9 @@ class CandidateFix(LenientModel):
 
     approach: str = "Fix proposed without a named strategy"
     function_source: str | None = None  # full replacement of the target function (demo)
-    patch: str | None = None  # unified diff (general repos, shown only)
+    patch: str | None = (
+        None  # unified diff (general repos; tested only when execution is on)
+    )
 
 
 class InvestigatorResult(BaseModel):
