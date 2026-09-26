@@ -390,3 +390,47 @@ async def test_granite_quota_marks_it_unavailable_while_bob_succeeds(monkeypatch
         "Granite unavailable: the watsonx.ai token quota" in e.message
         for e in channel.log
     )
+
+
+# ── Free-text answers when Bob's JSON wrapper is damaged ──────────────────────
+
+
+class _TextAnswer(bob.BaseModel):
+    answer: str
+
+
+def _parse_text(last_message: str, *extra_lines: str):
+    stdout = "\n".join([*extra_lines, _result_line(last_message)])
+    return bob.parse_answer(stdout, "", 0, _TextAnswer, text_field="answer")
+
+
+def test_text_answer_with_raw_newlines_is_accepted():
+    answer = _parse_text('{"answer": "## Findings\nline two with a "quote""}')
+    assert answer.status == "ok"
+    assert answer.data.answer.startswith("## Findings\nline two")
+
+
+def test_text_answer_followed_by_prose_is_accepted():
+    answer = _parse_text('{"answer": "fine"}\n\nHope this helps!')
+    assert answer.status == "ok" and answer.data.answer == "fine"
+
+
+def test_plain_markdown_reply_is_used_as_the_answer():
+    answer = _parse_text("## Scan findings\n\n1. Whisper fallback crashes")
+    assert answer.status == "ok"
+    assert answer.data.answer.startswith("## Scan findings")
+
+
+def test_limit_output_is_never_passed_off_as_an_answer():
+    answer = _parse_text(
+        "Contents of file x.py: ...",
+        json.dumps(
+            {"type": "error", "message": "The task reached the maximum of 6 turns."}
+        ),
+    )
+    assert answer.status == "limit"
+
+
+def test_without_text_field_damaged_json_still_fails():
+    stdout = _result_line("## not json at all")
+    assert bob.parse_answer(stdout, "", 0, _TextAnswer).status == "error"

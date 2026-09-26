@@ -8,6 +8,8 @@ interface Handlers<T> {
   onLog: (event: LogEvent) => void;
   onDone: (payload: T) => void;
   onError: (message: string) => void;
+  /** Ask streams only: incremental answer text. */
+  onToken?: (text: string) => void;
 }
 
 /**
@@ -26,6 +28,10 @@ export function useRunStream<T>(open: (() => EventSource) | null, handlers: Hand
     source.onopen = () => handlers.onReset();
     source.addEventListener("log", (e) => {
       handlers.onLog(JSON.parse((e as MessageEvent).data) as LogEvent);
+    });
+    source.addEventListener("token", (e) => {
+      const { text } = JSON.parse((e as MessageEvent).data) as { text: string };
+      handlers.onToken?.(text);
     });
     source.addEventListener("done", (e) => {
       finished = true;

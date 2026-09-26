@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import Link from "next/link";
+import { Suspense } from "react";
+import AskBar from "./components/AskBar";
 import "./globals.css";
 
 const plexSans = IBM_Plex_Sans({
@@ -27,17 +29,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${plexSans.variable} ${plexMono.variable}`}>
       <body className="min-h-screen flex flex-col bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100 antialiased font-sans">
-        <header className="border-b border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/70">
-          <div className="mx-auto max-w-5xl px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-            <Link href="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
-              <MedusaMark />
-              Medusa
-            </Link>
-            <span className="text-xs text-gray-500 dark:text-gray-400 hidden sm:inline">
-              Built for the IBM Bob 2.0 Hackathon
-            </span>
-          </div>
-        </header>
+        <div className="sticky top-0 z-30 bg-gray-50/90 dark:bg-gray-950/90 backdrop-blur">
+          <header className="border-b border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/70">
+            <div className="mx-auto max-w-5xl px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+              <Link href="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
+                <MedusaMark />
+                Medusa
+              </Link>
+              <span className="text-xs text-gray-500 dark:text-gray-400 hidden sm:inline">
+                Built for the IBM Bob 2.0 Hackathon
+              </span>
+            </div>
+          </header>
+          <Suspense fallback={null}>
+            <AskBar />
+          </Suspense>
+        </div>
         <main className="flex-1 w-full mx-auto max-w-5xl px-4 sm:px-6 py-10 sm:py-14">{children}</main>
         <footer className="border-t border-gray-200 dark:border-gray-800">
           <div className="mx-auto max-w-5xl px-4 sm:px-6 py-5 text-xs text-gray-500 dark:text-gray-400 flex flex-wrap gap-x-6 gap-y-1">

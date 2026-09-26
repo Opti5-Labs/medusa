@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -222,10 +223,40 @@ class BobAnswer:
     cost: float | None = None
 
 
+def _salvage_text(message: str, field: str) -> str | None:
+    """
+    Recover a free-text answer when Bob's JSON wrapper is damaged: the string
+    value of *field* if it can be read, else the whole reply when Bob answered
+    in plain text instead of JSON. None if nothing usable is there.
+    """
+    if match := re.search(rf'"{re.escape(field)}"\s*:\s*"', message):
+        try:
+            value, _ = json.decoder.scanstring(message, match.end(), False)
+        except ValueError:
+            value = ""
+        if value.strip():
+            return value
+    stripped = message.strip()
+    if stripped and not stripped.startswith(("{", "[")):
+        return stripped
+    return None
+
+
 def parse_answer(
-    stdout: str, stderr: str, returncode: int | None, schema: type[BaseModel]
+    stdout: str,
+    stderr: str,
+    returncode: int | None,
+    schema: type[BaseModel],
+    text_field: str | None = None,
 ) -> BobAnswer:
-    """Parse Bob Shell's NDJSON output (or failure) against *schema*."""
+    """
+    Parse Bob Shell's NDJSON output (or failure) against *schema*.
+
+    *text_field* names the single free-text field of a text-answer schema: if the
+    JSON is unusable, that field is recovered from the raw reply instead of
+    failing. Never applied when Bob stopped at a limit, since its last message is
+    then tool output rather than an answer.
+    """
     errors: list[str] = []
     result: dict | None = None
     for line in stdout.splitlines():
@@ -263,11 +294,21 @@ def parse_answer(
         for e in errors
         if "maximum" in e.lower() and ("turn" in e.lower() or "cost" in e.lower())
     ]
+    message = str(result.get("last_message") or "")
     try:
-        data = schema.model_validate(
-            extract_json(str(result.get("last_message") or ""))
-        )
+        data = schema.model_validate(extract_json(message))
     except (ValueError, TypeError) as exc:
+        if (
+            text_field
+            and not limit_hits
+            and (text := _salvage_text(message, text_field)) is not None
+        ):
+            log.info(
+                "bob: recovered a %s answer from a non-JSON reply", schema.__name__
+            )
+            return BobAnswer(
+                "ok", data=schema.model_validate({text_field: text}), cost=cost
+            )
         if limit_hits:
             return BobAnswer(
                 "limit",
@@ -324,7 +365,11 @@ def parse_output(
 
 
 async def _run_cli(
-    prompt: str, files: dict[str, str], schema: type[BaseModel], timeout_s: float
+    prompt: str,
+    files: dict[str, str],
+    schema: type[BaseModel],
+    timeout_s: float,
+    text_field: str | None = None,
 ) -> BobAnswer:
     workspace = Path(tempfile.mkdtemp(prefix="medusa_bob_"))
     proc = None
@@ -352,6 +397,7 @@ async def _run_cli(
             err.decode("utf-8", "replace"),
             proc.returncode,
             schema,
+            text_field,
         )
     except FileNotFoundError:
         return BobAnswer(
@@ -372,8 +418,12 @@ async def ask(
     files: dict[str, str],
     schema: type[BaseModel],
     timeout_s: float | None = None,
+    text_field: str | None = None,
 ) -> BobAnswer:
-    """One live Bob run answering in *schema*. Never raises; cached when successful."""
+    """
+    One live Bob run answering in *schema*. Never raises; cached when successful.
+    See parse_answer for *text_field*.
+    """
     if (reason := live_unavailable_reason()) is not None:
         return BobAnswer("unavailable", error=reason)
     key = hashlib.sha256(
@@ -393,7 +443,7 @@ async def ask(
         return copy.deepcopy(hit[1])
     async with _semaphore():
         answer = await _run_cli(
-            prompt, files, schema, timeout_s or config.BOB_TIMEOUT_S
+            prompt, files, schema, timeout_s or config.BOB_TIMEOUT_S, text_field
         )
     if answer.status == "ok":
         _cache[key] = (time.monotonic(), answer)

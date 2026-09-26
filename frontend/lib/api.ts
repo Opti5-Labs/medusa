@@ -159,6 +159,39 @@ export interface DebugDone {
   recommendation: Recommendation | null;
 }
 
+export type Grounding = "scan_data" | "sandbox_verified" | "reasoning";
+
+export interface AskCitation {
+  file: string;
+  line: number | null;
+}
+
+export interface AskStart {
+  ask_id: string;
+}
+
+export interface AskStatus {
+  enabled: boolean;
+  granite_available: boolean;
+  bob_available: boolean;
+  bob_reason: string | null;
+}
+
+/** scan_data only when answered_by is "scan"; sandbox_verified only for a sandbox-reproduced demo issue. */
+export interface AskAnswer {
+  ask_id: string;
+  question: string;
+  answer: string; // markdown; empty when error is set
+  grounding: Grounding;
+  answered_by: "scan" | "granite" | "bob";
+  citations: AskCitation[];
+  files_read: string[];
+  issue_id: string | null;
+  cost: number | null; // Bobcoins, Bob answers only
+  notice: string | null;
+  error: string | null;
+}
+
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 /** GET /api/health */
@@ -206,6 +239,23 @@ export const postDebug = (issueId: string, candidates?: number) =>
  */
 export const openDebugStream = (sessionId: string): EventSource =>
   new EventSource(`${BASE}/api/debug/${sessionId}/events`);
+
+/** GET /api/ask/status */
+export const getAskStatus = () => request<AskStatus>("/api/ask/status");
+
+/** POST /api/scan/{scan_id}/ask — omit issue_id to ask about the whole repo. */
+export const postAsk = (scanId: string, body: { question: string; issue_id?: string }) =>
+  request<AskStart>(`/api/scan/${encodeURIComponent(scanId)}/ask`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+/**
+ * GET /api/ask/{ask_id}/events — SSE stream (log, token, then done with an AskAnswer).
+ * Returns an EventSource; caller is responsible for closing it on unmount.
+ */
+export const openAskStream = (askId: string): EventSource =>
+  new EventSource(`${BASE}/api/ask/${encodeURIComponent(askId)}/events`);
 
 /** GET /api/debug/{session_id}/download?candidate_id= */
 export const getDebugDownloadUrl = (

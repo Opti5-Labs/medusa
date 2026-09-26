@@ -9,6 +9,7 @@ which keeps the dependency tree small and works on every Python we deploy on.
 Every call asks for JSON only and validates it with Pydantic. A call that times
 out, fails, or returns invalid JSON is retried GRANITE_RETRIES times, then
 raises GraniteError. Callers decide whether that is fatal.
+chat_text and chat_text_stream are the plain-text (optionally streamed) mode.
 """
 
 import asyncio
@@ -20,6 +21,7 @@ import time
 import types
 import typing
 from collections import OrderedDict
+from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 import httpx
@@ -189,19 +191,30 @@ async def _get_token(client: httpx.AsyncClient) -> str:
         return _token
 
 
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+# A reply that is entirely one fenced block. Fences inside strings are left alone.
+_WHOLE_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*?)\n?```$", re.DOTALL)
 
 
 def extract_json(text: str) -> object:
-    """Parse the model's reply, tolerating code fences or text around one JSON object."""
-    cleaned = _FENCE_RE.sub("", text.strip())
+    """
+    Parse the model's reply: one JSON object, possibly wrapped in a code fence,
+    surrounded by prose, or containing raw newlines inside strings (which strict
+    JSON rejects but models often produce).
+    """
+    cleaned = text.strip()
+    if fence := _WHOLE_FENCE_RE.match(cleaned):
+        cleaned = fence.group(1)
+    decoder = json.JSONDecoder(strict=False)
     try:
-        return json.loads(cleaned)
+        return decoder.decode(cleaned)
     except json.JSONDecodeError:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start == -1 or end <= start:
-            raise
-        return json.loads(cleaned[start : end + 1])
+        # Take the first complete object, ignoring any text before or after it.
+        for start in [i for i, ch in enumerate(cleaned) if ch == "{"][:20]:
+            try:
+                return decoder.raw_decode(cleaned, start)[0]
+            except json.JSONDecodeError:
+                continue
+        raise
 
 
 def _errors(resp: httpx.Response) -> list[dict]:
@@ -225,26 +238,7 @@ def _reason(resp: httpx.Response) -> str:
     return f" ({first.get('code', 'error')}: {message})"
 
 
-async def _chat_once(
-    client: httpx.AsyncClient, system: str, user: str, max_tokens: int
-) -> str:
-    token = await _get_token(client)
-    resp = await client.post(
-        f"{config.WATSONX_URL}/ml/v1/text/chat",
-        params={"version": config.WATSONX_API_VERSION},
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        json={
-            "model_id": config.GRANITE_MODEL_ID,
-            "project_id": config.WATSONX_PROJECT_ID,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
-        },
-    )
+def _check_status(resp: httpx.Response) -> None:
     if resp.status_code in (401, 403):
         codes = {e.get("code") for e in _errors(resp)}
         if "token_quota_reached" in codes:
@@ -264,6 +258,40 @@ async def _chat_once(
         raise GraniteError(
             f"watsonx.ai returned status {resp.status_code}{_reason(resp)}"
         )
+
+
+def _body(system: str, user: str, max_tokens: int) -> dict[str, Any]:
+    return {
+        "model_id": config.GRANITE_MODEL_ID,
+        "project_id": config.WATSONX_PROJECT_ID,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0,
+    }
+
+
+async def _chat_once(
+    client: httpx.AsyncClient,
+    system: str,
+    user: str,
+    max_tokens: int,
+    *,
+    json_mode: bool = True,
+) -> str:
+    token = await _get_token(client)
+    body = _body(system, user, max_tokens)
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    resp = await client.post(
+        f"{config.WATSONX_URL}/ml/v1/text/chat",
+        params={"version": config.WATSONX_API_VERSION},
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        json=body,
+    )
+    _check_status(resp)
     choices = resp.json().get("choices") or []
     if not choices:
         raise GraniteError("watsonx.ai returned no answer.")
@@ -328,4 +356,177 @@ async def chat_json(
                 )
             attempts += 1
             log.warning("granite: attempt %d failed: %s", attempts, _scrub(last_error))
+    raise GraniteError(f"Granite call failed: {_scrub(last_error)}.")
+
+
+class _Text(BaseModel):
+    text: str
+
+
+async def chat_text(system: str, user: str, *, max_tokens: int = 900) -> str:
+    """Ask Granite for a plain-text answer. Raises GraniteError on failure."""
+    if not is_configured():
+        raise GraniteError("Granite is not configured on this server.")
+    key = _cache_key(system, user, _Text, max_tokens)
+    if (cached := _cache_get(key)) is not None:
+        log.info("granite: reusing cached text answer")
+        return cached.text  # type: ignore[attr-defined]
+
+    last_error = "unknown error"
+    attempts = 0
+    waits = iter(_RATE_LIMIT_WAITS_S)
+    async with (
+        _primitives()[0],
+        httpx.AsyncClient(timeout=config.GRANITE_TIMEOUT_S) as client,
+    ):
+        while attempts <= config.GRANITE_RETRIES:
+            try:
+                async with asyncio.timeout(config.GRANITE_TIMEOUT_S):
+                    text = await _chat_once(
+                        client, system, user, max_tokens, json_mode=False
+                    )
+                if not text.strip():
+                    raise GraniteError("the model returned an empty answer")
+                _cache_put(key, _Text(text=text))
+                return text
+            except GraniteRateLimited as exc:
+                last_error = str(exc)
+                wait = next(waits, None)
+                if wait is None:
+                    break
+                log.info("granite: rate limited, retrying in %.0f s", wait)
+                await asyncio.sleep(wait)
+                continue
+            except GraniteError as exc:
+                last_error = str(exc)
+                if not exc.retryable:
+                    raise GraniteUnavailable(
+                        f"Granite call failed: {_scrub(last_error)}."
+                    ) from exc
+            except TimeoutError:
+                last_error = f"no answer within {config.GRANITE_TIMEOUT_S} s"
+            except httpx.HTTPError as exc:
+                last_error = f"network error ({type(exc).__name__})"
+            attempts += 1
+            log.warning("granite: attempt %d failed: %s", attempts, _scrub(last_error))
+    raise GraniteError(f"Granite call failed: {_scrub(last_error)}.")
+
+
+class _StreamUnsupported(Exception):
+    """chat_stream is not available for this account or model."""
+
+
+def _stream_piece(line: str) -> str:
+    if not line.startswith("data:"):
+        return ""
+    payload = line[5:].strip()
+    if not payload or payload == "[DONE]":
+        return ""
+    try:
+        choices = json.loads(payload).get("choices") or []
+    except (json.JSONDecodeError, AttributeError):
+        return ""
+    if not choices or not isinstance(choices[0], dict):
+        return ""
+    choice = choices[0]
+    content = (choice.get("delta") or {}).get("content") or (
+        choice.get("message") or {}
+    ).get("content")
+    return content if isinstance(content, str) else ""
+
+
+async def _stream_once(
+    client: httpx.AsyncClient, system: str, user: str, max_tokens: int
+) -> AsyncIterator[str]:
+    token = await _get_token(client)
+    async with client.stream(
+        "POST",
+        f"{config.WATSONX_URL}/ml/v1/text/chat_stream",
+        params={"version": config.WATSONX_API_VERSION},
+        headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"},
+        json=_body(system, user, max_tokens),
+    ) as resp:
+        if resp.status_code != 200:
+            await resp.aread()
+            if resp.status_code in (400, 404, 405):
+                raise _StreamUnsupported
+            _check_status(resp)
+        async for line in resp.aiter_lines():
+            if piece := _stream_piece(line):
+                yield piece
+
+
+async def chat_text_stream(
+    system: str, user: str, *, max_tokens: int = 900
+) -> AsyncIterator[str]:
+    """Yield a plain-text answer in pieces. Raises GraniteError on failure."""
+    if not config.ASK_STREAMING:
+        yield await chat_text(system, user, max_tokens=max_tokens)
+        return
+    if not is_configured():
+        raise GraniteError("Granite is not configured on this server.")
+    key = _cache_key(system, user, _Text, max_tokens)
+    if (cached := _cache_get(key)) is not None:
+        log.info("granite: reusing cached text answer")
+        yield cached.text  # type: ignore[attr-defined]
+        return
+
+    last_error = "unknown error"
+    attempts = 0
+    started = False  # after the first piece a retry would duplicate text
+    unsupported = False
+    waits = iter(_RATE_LIMIT_WAITS_S)
+    try:
+        async with (
+            asyncio.timeout(config.ASK_TIMEOUT_S),
+            _primitives()[0],
+            httpx.AsyncClient(timeout=config.GRANITE_TIMEOUT_S) as client,
+        ):
+            while attempts <= config.GRANITE_RETRIES:
+                pieces: list[str] = []
+                try:
+                    async for piece in _stream_once(client, system, user, max_tokens):
+                        pieces.append(piece)
+                        started = True
+                        yield piece
+                    if not pieces:
+                        raise GraniteError("the model returned an empty answer")
+                    _cache_put(key, _Text(text="".join(pieces)))
+                    return
+                except _StreamUnsupported:
+                    unsupported = True
+                    break
+                except GraniteRateLimited as exc:
+                    last_error = str(exc)
+                    wait = next(waits, None)
+                    if wait is None:
+                        break
+                    log.info("granite: rate limited, retrying in %.0f s", wait)
+                    await asyncio.sleep(wait)
+                    continue
+                except GraniteError as exc:
+                    last_error = str(exc)
+                    if not exc.retryable:
+                        raise GraniteUnavailable(
+                            f"Granite call failed: {_scrub(last_error)}."
+                        ) from exc
+                except httpx.HTTPError as exc:
+                    last_error = f"network error ({type(exc).__name__})"
+                if started:
+                    raise GraniteError("the answer was cut off")
+                attempts += 1
+                log.warning(
+                    "granite: attempt %d failed: %s", attempts, _scrub(last_error)
+                )
+    except TimeoutError:
+        if started:
+            raise GraniteError("the answer was cut off") from None
+        raise GraniteError(
+            f"Granite call failed: no answer within {config.ASK_TIMEOUT_S} s."
+        ) from None
+
+    if unsupported:
+        log.info("granite: streaming unsupported, falling back to a whole answer")
+        yield await chat_text(system, user, max_tokens=max_tokens)
+        return
     raise GraniteError(f"Granite call failed: {_scrub(last_error)}.")

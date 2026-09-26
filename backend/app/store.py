@@ -23,8 +23,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app import config
 from app.config import RUN_TTL_SECONDS
 from app.models.contracts import (
+    AskAnswer,
     DebugSession,
     Issue,
     Recommendation,
@@ -55,10 +57,15 @@ class ScanRecord:
     result: ScanResult
     root: Path | None = None  # extracted repo root, read as text only
     scenarios: dict[str, str] = field(default_factory=dict)  # issue_id -> demo scenario
+    history: list[tuple[str, str]] = field(default_factory=list)  # (question, answer)
     created_at: float = field(default_factory=time.monotonic)
 
     def is_expired(self) -> bool:
         return (time.monotonic() - self.created_at) > RUN_TTL_SECONDS
+
+    def remember(self, question: str, answer: str) -> None:
+        self.history.append((question, answer))
+        del self.history[: -config.ASK_MAX_REMEMBERED_TURNS]
 
 
 # Kept for callers/tests that use the old name.
@@ -89,12 +96,23 @@ class DebugRun:
     created_at: float = field(default_factory=time.monotonic)
 
 
+@dataclass
+class AskRun:
+    ask_id: str
+    scan_id: str
+    channel: EventChannel
+    answer: AskAnswer | None = None
+    task: asyncio.Task | None = None
+    created_at: float = field(default_factory=time.monotonic)
+
+
 class RunStore:
     def __init__(self) -> None:
         self._records: OrderedDict[str, ScanRecord] = OrderedDict()
         self._issue_index: dict[str, str] = {}  # issue_id -> scan_id
         self.repro_runs: dict[str, ReproRun] = {}
         self.debug_runs: dict[str, DebugRun] = {}
+        self.ask_runs: dict[str, AskRun] = {}
         self._lock = asyncio.Lock()
         self._sweeper_task: asyncio.Task | None = None
 
@@ -112,7 +130,11 @@ class RunStore:
                 await self._sweeper_task
             except asyncio.CancelledError:
                 pass
-        for run in [*self.repro_runs.values(), *self.debug_runs.values()]:
+        for run in [
+            *self.repro_runs.values(),
+            *self.debug_runs.values(),
+            *self.ask_runs.values(),
+        ]:
             if run.task and not run.task.done():
                 run.task.cancel()
 
@@ -212,7 +234,32 @@ class RunStore:
         runs = [r for r in self.repro_runs.values() if r.attempt.issue_id == issue_id]
         return max(runs, key=lambda r: r.created_at) if runs else None
 
-    def _drop_run(self, run: ReproRun | DebugRun) -> None:
+    def add_ask(self, run: AskRun) -> None:
+        # a finished answer only needs to stay long enough for a browser to replay it
+        stale = time.monotonic() - config.ASK_FINISHED_KEEP_SECONDS
+        for ask_id in [
+            k
+            for k, r in self.ask_runs.items()
+            if r.channel.closed and r.created_at < stale
+        ]:
+            del self.ask_runs[ask_id]
+        if len(self.ask_runs) >= config.ASK_MAX_RUNS:
+            raise StoreFullError(
+                "Server is busy answering too many questions. Please try again shortly."
+            )
+        self.ask_runs[run.ask_id] = run
+
+    def ask_running_for(self, scan_id: str) -> bool:
+        return any(
+            r.scan_id == scan_id and not r.channel.closed
+            for r in self.ask_runs.values()
+        )
+
+    def latest_debug_for(self, issue_id: str) -> DebugRun | None:
+        runs = [r for r in self.debug_runs.values() if r.session.issue_id == issue_id]
+        return max(runs, key=lambda r: r.created_at) if runs else None
+
+    def _drop_run(self, run: ReproRun | DebugRun | AskRun) -> None:
         if run.task and not run.task.done():
             run.task.cancel()
         if isinstance(run, DebugRun) and run.tmp_dir and run.tmp_dir.exists():
@@ -236,7 +283,7 @@ class RunStore:
             await self.delete(sid)
 
         cutoff = time.monotonic() - RUN_TTL_SECONDS
-        for runs in (self.repro_runs, self.debug_runs):
+        for runs in (self.repro_runs, self.debug_runs, self.ask_runs):
             for run_id in [k for k, r in runs.items() if r.created_at < cutoff]:
                 self._drop_run(runs.pop(run_id))
 
