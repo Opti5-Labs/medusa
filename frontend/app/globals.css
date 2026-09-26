@@ -279,6 +279,11 @@
   .recent-when { display: grid; justify-items: end; gap: 2px; text-align: right; }
   .recent-expiry { font-size: 12px; color: var(--label-3); }
   .recent-expiry.is-soon { color: var(--color-amber-300); }
+  .repo-title { overflow-wrap: anywhere; }
+  .architecture-loading { display: flex; align-items: center; gap: var(--sp-3); font-size: 14px; color: var(--label-2); }
+  .architecture-card { gap: var(--sp-4); }
+  .architecture-diagram { overflow-x: auto; padding: var(--sp-4); border: 1px solid var(--separator); border-radius: 14px; background: rgb(6 10 20 / 45%); }
+  .architecture-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
   .file-list { display: grid; gap: var(--sp-1); margin-top: var(--sp-3); padding-left: var(--sp-5); }
 
   /* Investigate: run controls grouped in one bar; candidates two up. */
@@ -629,7 +634,9 @@
 .recent-row + .recent-row::before { content: ""; position: absolute; top: 0; left: 58px; right: 8px; height: 1px; background: var(--separator); }
 .recent-row:active { background: var(--fill); }
 .recent-row .tile, .engine-row .tile { width: 38px; height: 38px; }
-.recent-row .tile svg, .engine-row .tile svg { width: 18px; height: 18px; }
+.recent-row .tile svg { width: 18px; height: 18px; }
+/* The Bob and Granite marks carry more detail, so they sit a little larger in their orbs. */
+.engine-row .tile svg { width: 23px; height: 23px; stroke-width: 1.5; }
 .recent-name { flex: 1; min-width: 0; }
 .recent-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 500; }
 .recent-name small { display: block; margin-top: 1px; font-size: 13px; color: var(--label-2); }
@@ -651,8 +658,28 @@
 .engine-note svg { width: 18px; height: 18px; color: var(--color-pass); }
 .engine-note strong { display: block; color: var(--label); font-weight: 600; }
 
-.workspace-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-6) var(--gutter); font-size: 12px; color: var(--label-3); }
-.workspace-footer > span:first-child { letter-spacing: 0.24em; }
+/* Footer: a quiet sign-off under a fading hairline; brand on the left, links on the right. */
+.workspace-footer { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3) var(--sp-6); margin-top: var(--sp-8); padding: var(--sp-6) var(--gutter) var(--sp-8); font-size: 12px; color: var(--label-3); }
+.workspace-footer::before { content: ""; position: absolute; top: 0; left: var(--gutter); right: var(--gutter); height: 1px; background: linear-gradient(90deg, transparent, var(--glass-edge) 20%, var(--glass-edge) 80%, transparent); }
+.footer-brand, .footer-links { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+.footer-brand img { width: 18px; height: 18px; object-fit: contain; opacity: 0.85; }
+.footer-wordmark {
+  font-weight: 500;
+  letter-spacing: 0.26em;
+  background-image:
+    linear-gradient(100deg, transparent 38%, rgb(255 255 255 / 95%) 46%, rgb(214 190 255 / 90%) 50%, rgb(180 230 255 / 90%) 54%, transparent 62%),
+    var(--chrome-text);
+  background-size: 300% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  background-position: 130% 0, 0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Same mark behaviour as the sidebar: the emblem turns one petal and the wordmark catches a glint. */
+.footer-brand img { transition: transform 900ms var(--ease-out), opacity 400ms ease; }
+.footer-divider { width: 1px; height: 12px; background: var(--separator); }
+.footer-link { padding: 0; border: 0; background: none; font-size: 12px; color: var(--label-2); }
 
 @media (hover: hover) and (pointer: fine) {
   .nav-link:not(.active):hover { background: var(--fill); color: var(--label); }
@@ -842,6 +869,9 @@
 @media (hover: hover) and (pointer: fine) {
   .dropzone:hover { border-color: rgb(214 228 255 / 32%); background: rgb(255 255 255 / 4%); }
   .chip-button:not(:disabled):hover { background: var(--fill-strong); }
+  .footer-link:hover { color: var(--label); text-decoration: underline; text-underline-offset: 3px; }
+  .footer-brand:hover img { transform: rotate(45deg); opacity: 1; }
+  .footer-brand:hover .footer-wordmark { animation: chrome-glint 2.6s var(--ease-in-out) 1; }
   .text-link:hover, .notice a:hover { text-decoration: underline; text-underline-offset: 3px; }
   .disclosure > summary:hover { color: var(--label); }
   .ask-chip:hover, .ask-toggle:hover { background: var(--fill-strong); color: var(--label); }
@@ -1097,6 +1127,7 @@
   .sidebar-bottom .nav-link { width: 38px; min-height: 38px; }
   .sidebar-bottom .nav-link > span { display: none; }
   :root { --gutter: 16px; }
+  .workspace-footer { flex-direction: column; align-items: flex-start; }
   .workspace-header { position: relative; min-height: 52px; }
   .workspace-art { height: 640px; background-position: 62% top; background-image: linear-gradient(180deg, rgb(11 17 29 / 45%) 0%, rgb(11 17 29 / 78%) 40%, var(--window) 85%), url("/images/chrome-flow.png"); }
   .dashboard-main { padding: 0 12px; }
@@ -1132,7 +1163,8 @@
   .ask-thinking { color: var(--label-2); background: none; }
   .holo-rim::before, .holo-spinner, .hero-content h1, .wordmark strong, .tile::after { animation: none !important; }
   .btn-primary::after, .launcher-submit::after { display: none; }
-  button, a, .btn, .pressable, .toggle span, .action-arrow, .brand img, [data-holo] { transform: none !important; }
+  button, a, .btn, .pressable, .toggle span, .action-arrow, .brand img, .footer-brand img, [data-holo] { transform: none !important; }
+  .footer-wordmark { animation: none !important; }
   .workspace-dialog, .workspace-dialog[open] { transform: none; transition-property: opacity, overlay, display; }
   @starting-style { .workspace-dialog[open] { transform: none; } }
 }
@@ -1145,5 +1177,5 @@
 @media (prefers-contrast: more) {
   :root { --label-2: rgb(230 238 250 / 88%); --label-3: rgb(230 238 250 / 72%); --separator: rgb(220 230 255 / 30%); --glass-edge: rgb(220 230 255 / 50%); }
   .glass, .route-main > div { background: var(--glass-solid); backdrop-filter: none; }
-  .hero-content h1 .word, .wordmark strong { background: none; color: var(--label); }
+  .hero-content h1 .word, .wordmark strong, .footer-wordmark { background: none; color: var(--label); }
 }

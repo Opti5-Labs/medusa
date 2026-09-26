@@ -168,3 +168,180 @@ class AskAnswer(BaseModel):
     cost: float | None = None  # Bobcoins, Bob answers only
     notice: str | None = None  # e.g. why Bob answered instead of Granite
     error: str | None = None  # human-readable, set when no answer could be produced
+
+
+# ── Architecture ───────────────────────────────────────────────────────────────
+# Project architecture generation: a deterministic (optionally model-assisted)
+# component graph + Mermaid diagram for a scanned repository. See
+# app/pipelines/architecture.py. Nothing here implies the code was executed —
+# general repos are read as text only, same as the rest of Medusa.
+
+ArchitectureStatus = Literal["running", "complete", "partial", "unavailable", "error"]
+ArchitectureSource = Literal["curated", "static", "static_and_model"]
+Assisted = Literal["deterministic", "model"]
+
+ComponentType = Literal[
+    "frontend",
+    "backend",
+    "api_layer",
+    "service",
+    "library",
+    "data_store",
+    "external_service",
+    "worker",
+    "cli",
+    "config",
+    "infrastructure",
+    "tests",
+    "docs",
+    "unknown",
+]
+RelationshipType = Literal[
+    "imports",
+    "calls",
+    "serves",
+    "persists_to",
+    "publishes_to",
+    "configures",
+    "deploys",
+    "depends_on",
+]
+
+
+class EvidenceRef(BaseModel):
+    """A validated, repository-relative path backing a component or relationship claim."""
+
+    path: str  # posix, relative to the repo root — never absolute
+    line: int | None = None  # 1-based
+    end_line: int | None = None
+    note: str | None = None  # e.g. "FastAPI router include"
+    # False = referenced but not present in the analysed tree (e.g. the
+    # curated OptiLearn artifact's upstream-only paths). Always True for
+    # statically inferred (general-repo) evidence.
+    verified: bool = True
+    url: str | None = None  # set when verified is False, e.g. an upstream link
+
+
+class ArchitectureComponent(BaseModel):
+    id: str  # stable slug, derived from repository paths
+    label: str
+    type: ComponentType
+    description: str = ""
+    paths: list[str] = []  # repo-relative dirs/files this component covers
+    evidence: list[EvidenceRef] = []
+    confidence: float
+    assisted_by: Assisted = "deterministic"
+    file_count: int = 0
+    rank: float = 0.0  # relative importance; drives ordering and the Mermaid budget
+
+
+class ArchitectureRelationship(BaseModel):
+    source: str  # component id
+    target: str  # component id
+    type: RelationshipType
+    explanation: str = ""
+    evidence: list[EvidenceRef] = []
+    confidence: float
+    assisted_by: Assisted = "deterministic"
+
+
+class TechnologyStack(BaseModel):
+    languages: list[str] = []  # detected, ordered by source-byte share
+    frameworks: list[str] = []
+    build_systems: list[str] = []
+    package_managers: list[str] = []
+    test_frameworks: list[str] = []
+    unsupported_languages: list[str] = []  # present but NOT parsed by this build
+
+
+class Entrypoint(BaseModel):
+    path: str
+    kind: Literal[
+        "http_server", "cli", "worker", "web_app", "script", "container", "unknown"
+    ]
+    detail: str = ""
+    evidence: list[EvidenceRef] = []
+
+
+class DeploymentArtifact(BaseModel):
+    kind: Literal[
+        "dockerfile", "compose", "ci_workflow", "iac", "systemd", "webserver", "other"
+    ]
+    path: str
+    detail: str = ""
+    services: list[str] = []  # compose/CI service or job NAMES only, never values
+
+
+class ExternalService(BaseModel):
+    name: str
+    detail: str = ""
+    evidence: list[EvidenceRef] = []
+    confidence: float
+    assisted_by: Assisted = "deterministic"
+
+
+class DataStore(BaseModel):
+    name: str
+    kind: Literal[
+        "relational",
+        "document",
+        "key_value",
+        "vector",
+        "object_store",
+        "file",
+        "unknown",
+    ]
+    detail: str = ""
+    evidence: list[EvidenceRef] = []
+    confidence: float
+    assisted_by: Assisted = "deterministic"
+
+
+class ArchitectureCoverage(BaseModel):
+    """Honest, quotable coverage. Rendered as prose in the UI."""
+
+    files_discovered: int  # everything walked, before any filter
+    source_files_discovered: int  # recognised source extensions
+    source_files_supported: int  # in a language this build can parse
+    files_considered: int  # survived the inventory filter
+    files_parsed: int
+    files_skipped: int
+    source_bytes: int
+    source_lines: int
+    parse_rate: float  # files_parsed / max(1, source_files_supported)
+    parse_failures: int
+    tier: Literal[1, 2, 3]
+    limit_exceeded: str | None = (
+        None  # the exact constant name, e.g. "ARCH_MAX_PARSED_FILES"
+    )
+    skipped_reasons: dict[str, int] = {}  # {"vendored": 812, "binary": 45, ...}
+    languages_parsed: dict[str, int] = {}
+    languages_not_parsed: dict[str, int] = {}
+
+
+class ArchitectureReport(BaseModel):
+    architecture_id: str
+    scan_id: str
+    status: ArchitectureStatus
+    source: ArchitectureSource
+    repo_source: Literal["demo", "github", "zip"]
+    summary: str = ""
+    technology_stack: TechnologyStack = TechnologyStack()
+    entrypoints: list[Entrypoint] = []
+    components: list[ArchitectureComponent] = []
+    relationships: list[ArchitectureRelationship] = []
+    external_services: list[ExternalService] = []
+    data_stores: list[DataStore] = []
+    deployment: list[DeploymentArtifact] = []
+    mermaid: str = ""  # server-generated, sanitized; "" when no graph was produced
+    detail_mermaid: str | None = None  # curated verbatim detail diagram (demo only)
+    coverage: ArchitectureCoverage | None = None
+    warnings: list[str] = []  # things that went wrong but did not stop the run
+    limitations: list[str] = []  # things this analysis structurally cannot know
+    narrowing_suggestions: list[str] = []  # concrete next steps on partial/unavailable
+    files_considered: list[str] = []  # sample, capped — see ARCH_REPORT_PATH_SAMPLE
+    files_parsed: list[str] = []  # sample, capped
+    files_skipped: list[str] = []  # sample, capped
+    curated_version: str | None = None  # curated only, e.g. "optilearn@1.1.0"
+    log: list[LogEvent] = []  # snapshotted on completion, like ReproAttempt.log
+    generated_at: float

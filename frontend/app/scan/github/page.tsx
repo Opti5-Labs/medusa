@@ -66,7 +66,15 @@ export default function ScanGitHubPage() {
         { source: "github", repo_url: normalizeGithubUrl(url) },
         abortRef.current.signal
       );
-      rememberScan(result, normalizeGithubUrl(url).replace("https://github.com/", ""));
+      // "owner/repo" for display, derived from what was typed.
+      const displayName = normalizeGithubUrl(url)
+        .replace(/^https?:\/\//i, "")
+        .replace(/^www\./i, "")
+        .replace(/^github\.com\//i, "")
+        .replace(/\.git$/i, "")
+        .replace(/\/$/, "")
+        .replace(/\/tree\/.*$/, "");
+      rememberScan(result, displayName);
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;

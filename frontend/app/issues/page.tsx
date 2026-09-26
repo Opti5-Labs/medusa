@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
-import { ScanResult, Issue } from "../../lib/api";
+import { ArchitectureReport, ScanResult, Issue } from "../../lib/api";
+import { useArchitecture } from "../../lib/useArchitecture";
 import Badge, { type Tone } from "../components/Badge";
 import Icon from "../components/Icon";
+import MermaidView from "../components/MermaidView";
 
 const PRIORITY_TONE: Record<string, Tone> = { High: "red", Medium: "amber", Low: "green" };
 
@@ -93,6 +95,87 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
   );
 }
 
+/** Compact, textual stand-in for when the diagram itself fails to render. */
+function ComponentFallbackList({ report }: { report: ArchitectureReport }) {
+  if (report.components.length === 0) return null;
+  return (
+    <ul className="panel-list">
+      {report.components.map((c) => (
+        <li key={c.id}>{c.label}</li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Auto-starts (or reuses) the architecture run for this scan and shows a
+ * rendered diagram once it is ready. Never implies the repository code was
+ * executed: the source/status badges and caption say plainly whether this
+ * is the curated OptiLearn reference or statically inferred.
+ */
+function DerivedArchitecture({ scanId }: { scanId: string }) {
+  const { report, error, running } = useArchitecture(scanId);
+
+  return (
+    <section className="section" aria-labelledby="architecture-heading">
+      <div className="section-head">
+        <h3 id="architecture-heading" className="headline">Project architecture</h3>
+        <Link href={`/architecture?scan=${scanId}`} className="btn btn-secondary btn-sm">
+          View full architecture
+        </Link>
+      </div>
+
+      {error && (
+        <p role="alert" className="alert">
+          {error}
+        </p>
+      )}
+
+      {running && !error && (
+        <div className="card architecture-loading">
+          <span className="holo-spinner" aria-hidden="true" />
+          Generating the architecture diagram…
+        </div>
+      )}
+
+      {report && report.status !== "running" && (
+        <div className="card architecture-card">
+          <div className="badges">
+            <Badge tone={report.source === "curated" ? "violet" : "blue"}>
+              {report.source === "curated" ? "Curated" : "Statically inferred"}
+            </Badge>
+            {report.status !== "complete" && (
+              <Badge tone="amber">{report.status === "partial" ? "Partial" : "Unavailable"}</Badge>
+            )}
+          </div>
+
+          {report.mermaid ? (
+            <div className="architecture-diagram">
+              <MermaidView
+                source={report.mermaid}
+                id={report.architecture_id}
+                fallback={<ComponentFallbackList report={report} />}
+              />
+            </div>
+          ) : (
+            <p className="panel-text">
+              {report.status === "unavailable"
+                ? "This repository is too large for a diagram. See the full architecture report for details."
+                : "No diagram was generated for this repository."}
+            </p>
+          )}
+
+          <p className="field-hint">
+            {report.source === "curated"
+              ? "A curated, hand-authored reference diagram for the OptiLearn demo."
+              : "Inferred from repository files by static analysis. Nothing here was executed."}
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function IssuesContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -100,6 +183,7 @@ function IssuesContent() {
 
   const [result, setResult] = useState<ScanResult | null>(null);
   const [expired, setExpired] = useState(false);
+  const [repoName, setRepoName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!scanId) {
@@ -116,6 +200,9 @@ function IssuesContent() {
     } catch {
       setExpired(true);
     }
+    // Set by the scan entry points (see rememberScan). Absent for older links,
+    // in which case the title falls back to the source label.
+    setRepoName(sessionStorage.getItem(`scan:${scanId}:name`));
   }, [scanId]);
 
   if (expired) {
@@ -148,7 +235,7 @@ function IssuesContent() {
       <header className="page-header">
         <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
         <div className="page-header-row">
-          <h2 className="title-1">Issues</h2>
+          <h2 className="title-1 repo-title">{repoName ?? sourceLabel[result.repo_source] ?? result.repo_source}</h2>
           <button onClick={() => router.push("/")} className="btn btn-secondary">
             New scan
           </button>
@@ -181,6 +268,8 @@ function IssuesContent() {
           </ul>
         </div>
       )}
+
+      <DerivedArchitecture scanId={result.scan_id} />
 
       <section className="section" aria-labelledby="issue-count">
         <div className="section-head">

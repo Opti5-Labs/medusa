@@ -77,7 +77,7 @@ export default function ScanUploadPage() {
 
     try {
       const result: ScanResult = await postScanUpload(file, abortRef.current.signal);
-      rememberScan(result, file.name);
+      rememberScan(result, file.name.replace(/\.zip$/i, ""));
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;

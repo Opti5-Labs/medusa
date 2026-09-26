@@ -20,6 +20,7 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith("/scan/upload")) return "Upload zip";
   if (pathname.startsWith("/investigate")) return "Investigation";
   if (pathname.startsWith("/recent")) return "Recent scans";
+  if (pathname.startsWith("/architecture")) return "Architecture";
   return "Scan results";
 }
 
@@ -173,7 +174,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </header>
           <div className="ask-container"><Suspense fallback={null}><AskBar /></Suspense></div>
           <main id="main-content" tabIndex={-1} className={home ? "dashboard-main" : "route-main"}>{children}</main>
-          <footer className="workspace-footer"><span>MEDUSA</span><span>Powered by IBM Bob and Granite on watsonx.ai</span></footer>
+          <footer className="workspace-footer">
+            <div className="footer-brand">
+              <img src="/images/medusa-mark.png" width="18" height="18" alt="" />
+              <span className="footer-wordmark">MEDUSA</span>
+              <span className="footer-divider" aria-hidden="true" />
+              <span>Built for the IBM Bob 2.0 Hackathon</span>
+            </div>
+            <div className="footer-links">
+              <button type="button" className="footer-link" onClick={() => openDialog("guide")}>How it works</button>
+              <span className="footer-divider" aria-hidden="true" />
+              <span>Powered by IBM Bob and Granite on watsonx.ai</span>
+            </div>
+          </footer>
         </div>
       </div>
 

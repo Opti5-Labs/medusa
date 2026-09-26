@@ -54,6 +54,13 @@ function useTypedPlaceholder(input: RefObject<HTMLInputElement | null>, paused: 
   }, [input, paused]);
 }
 
+/** Greeting for a local hour (0–23). The small hours still count as evening, not morning. */
+function greetingFor(hour: number): string {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 export default function Home() {
   const router = useRouter();
   const [repository, setRepository] = useState("");
@@ -65,12 +72,19 @@ export default function Home() {
   const latest = recent[0];
 
   useEffect(() => {
-    const hour = new Date().getHours();
-    setGreeting(hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening");
-    const refresh = () => setRecent(readRecentScans());
+    // The greeting follows the visitor's local clock and updates if a boundary
+    // passes while the page is open (checked each minute and on focus).
+    const refresh = () => {
+      setGreeting(greetingFor(new Date().getHours()));
+      setRecent(readRecentScans());
+    };
     refresh();
+    const timer = window.setInterval(() => setGreeting(greetingFor(new Date().getHours())), 60_000);
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   return (
@@ -147,8 +161,8 @@ export default function Home() {
           <div className="panel-heading">
             <div><h2 id="intelligence-heading">Two investigators</h2><p>Neither sees the other&apos;s diagnosis.</p></div>
           </div>
-          <div className="engine-row"><span className="tile"><Icon name="code" /></span><div><strong>IBM Bob</strong><small>Reads the code, diagnoses, proposes fixes</small></div></div>
-          <div className="engine-row"><span className="tile purple"><Icon name="spark" /></span><div><strong>Granite</strong><small>Scans for issues and diagnoses on its own</small></div></div>
+          <div className="engine-row"><span className="tile"><Icon name="bob" /></span><div><strong>IBM Bob</strong><small>Reads the code, diagnoses, proposes fixes</small></div></div>
+          <div className="engine-row"><span className="tile cyan"><Icon name="granite" /></span><div><strong>Granite</strong><small>Scans for issues and diagnoses on its own</small></div></div>
           <div className="engine-note"><Icon name="check" /><span><strong>Models investigate. Tests decide.</strong>Sandbox testing is available on the OptiLearn demo.</span></div>
         </section>
       </div>

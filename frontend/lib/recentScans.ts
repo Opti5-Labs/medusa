@@ -24,6 +24,8 @@ export function readRecentScans(): RecentScan[] {
 
 export function rememberScan(result: ScanResult, name: string) {
   sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
+  // Display name read by the Issues page title (a client-side label; the contract has no name field).
+  sessionStorage.setItem(`scan:${result.scan_id}:name`, name);
   const entry: RecentScan = {
     id: result.scan_id, name, source: result.repo_source,
     issues: result.issues.length, files: result.files_scanned.length, createdAt: Date.now(),

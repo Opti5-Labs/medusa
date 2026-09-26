@@ -22,6 +22,9 @@ const paths = {
   moon: <><path d="M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5Z" /></>,
   bolt: <><path d="m13 2-9 12h7l-1 8 10-13h-7Z" /></>,
   trash: <><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13" /></>,
+  // Line-art takes on the IBM Bob robot (hard hat and face) and the Granite nested cubes.
+  bob: <><path d="M5.8 11a6.2 6.2 0 0 1 12.4 0M4.2 11.2h15.6M10.4 5.3v3.1M13.6 5.3v3.1" /><path d="M6.8 11.4v4.8a2.6 2.6 0 0 0 2.6 2.6h5.2a2.6 2.6 0 0 0 2.6-2.6v-4.8M5.1 13.2v2.6M18.9 13.2v2.6" /><circle cx="10" cy="14.3" r="1" fill="currentColor" stroke="none" /><circle cx="14" cy="14.3" r="1" fill="currentColor" stroke="none" /><path d="M10.5 16.5q1.5 1 3 0" /></>,
+  granite: <><path d="M12 2.8 20.2 6.6v10.8L12 21.2l-8.2-3.8V6.6Z" /><path d="M3.8 6.6 12 10.4l8.2-3.8M12 10.4v10.8" /><path d="M14.6 7.6 18 9.2v4.5l-3.4 1.6-3.4-1.6V9.2Z" strokeOpacity="0.75" /><path d="M11.2 9.2l3.4 1.6L18 9.2M14.6 10.8v4.5" strokeOpacity="0.75" /></>,
 };
 export type IconName = keyof typeof paths;
 export default function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {

@@ -263,3 +263,155 @@ export const getDebugDownloadUrl = (
   candidateId: string
 ): string =>
   `${BASE}/api/debug/${sessionId}/download?candidate_id=${encodeURIComponent(candidateId)}`;
+
+// ── Architecture (mirror of the same section in backend/app/models/contracts.py) ─
+
+export type ArchitectureStatus = "running" | "complete" | "partial" | "unavailable" | "error";
+export type ArchitectureSource = "curated" | "static" | "static_and_model";
+export type Assisted = "deterministic" | "model";
+
+export type ComponentType =
+  | "frontend" | "backend" | "api_layer" | "service" | "library" | "data_store"
+  | "external_service" | "worker" | "cli" | "config" | "infrastructure"
+  | "tests" | "docs" | "unknown";
+
+export type RelationshipType =
+  | "imports" | "calls" | "serves" | "persists_to" | "publishes_to"
+  | "configures" | "deploys" | "depends_on";
+
+export interface EvidenceRef {
+  path: string;
+  line: number | null;
+  end_line: number | null;
+  note: string | null;
+  verified: boolean;
+  url: string | null;
+}
+
+export interface ArchitectureComponent {
+  id: string;
+  label: string;
+  type: ComponentType;
+  description: string;
+  paths: string[];
+  evidence: EvidenceRef[];
+  confidence: number;
+  assisted_by: Assisted;
+  file_count: number;
+  rank: number;
+}
+
+export interface ArchitectureRelationship {
+  source: string;
+  target: string;
+  type: RelationshipType;
+  explanation: string;
+  evidence: EvidenceRef[];
+  confidence: number;
+  assisted_by: Assisted;
+}
+
+export interface TechnologyStack {
+  languages: string[];
+  frameworks: string[];
+  build_systems: string[];
+  package_managers: string[];
+  test_frameworks: string[];
+  unsupported_languages: string[];
+}
+
+export interface Entrypoint {
+  path: string;
+  kind: "http_server" | "cli" | "worker" | "web_app" | "script" | "container" | "unknown";
+  detail: string;
+  evidence: EvidenceRef[];
+}
+
+export interface DeploymentArtifact {
+  kind: "dockerfile" | "compose" | "ci_workflow" | "iac" | "systemd" | "webserver" | "other";
+  path: string;
+  detail: string;
+  services: string[];
+}
+
+export interface ExternalService {
+  name: string;
+  detail: string;
+  evidence: EvidenceRef[];
+  confidence: number;
+  assisted_by: Assisted;
+}
+
+export interface DataStore {
+  name: string;
+  kind: "relational" | "document" | "key_value" | "vector" | "object_store" | "file" | "unknown";
+  detail: string;
+  evidence: EvidenceRef[];
+  confidence: number;
+  assisted_by: Assisted;
+}
+
+export interface ArchitectureCoverage {
+  files_discovered: number;
+  source_files_discovered: number;
+  source_files_supported: number;
+  files_considered: number;
+  files_parsed: number;
+  files_skipped: number;
+  source_bytes: number;
+  source_lines: number;
+  parse_rate: number;
+  parse_failures: number;
+  tier: 1 | 2 | 3;
+  limit_exceeded: string | null;
+  skipped_reasons: Record<string, number>;
+  languages_parsed: Record<string, number>;
+  languages_not_parsed: Record<string, number>;
+}
+
+export interface ArchitectureReport {
+  architecture_id: string;
+  scan_id: string;
+  status: ArchitectureStatus;
+  source: ArchitectureSource;
+  repo_source: "demo" | "github" | "zip";
+  summary: string;
+  technology_stack: TechnologyStack;
+  entrypoints: Entrypoint[];
+  components: ArchitectureComponent[];
+  relationships: ArchitectureRelationship[];
+  external_services: ExternalService[];
+  data_stores: DataStore[];
+  deployment: DeploymentArtifact[];
+  mermaid: string;
+  detail_mermaid: string | null;
+  coverage: ArchitectureCoverage | null;
+  warnings: string[];
+  limitations: string[];
+  narrowing_suggestions: string[];
+  files_considered: string[];
+  files_parsed: string[];
+  files_skipped: string[];
+  curated_version: string | null;
+  log: LogEvent[];
+  generated_at: number;
+}
+
+/** POST /api/scans/{scan_id}/architecture — idempotent per scan. */
+export const postArchitecture = (scanId: string) =>
+  request<ArchitectureReport>(`/api/scans/${scanId}/architecture`, { method: "POST" });
+
+/** GET /api/architecture/{id} — the final report (reconnect / no-SSE fallback). */
+export const getArchitecture = (id: string) =>
+  request<ArchitectureReport>(`/api/architecture/${id}`);
+
+/**
+ * GET /api/architecture/{id}/events — SSE stream.
+ * Returns an EventSource; caller is responsible for closing it on unmount.
+ */
+export const openArchitectureStream = (id: string): EventSource =>
+  new EventSource(`${BASE}/api/architecture/${id}/events`);
+
+/** GET /api/architecture/{id}/download?format= */
+export const getArchitectureDownloadUrl = (id: string, format: "mermaid" | "json"): string =>
+  `${BASE}/api/architecture/${id}/download?format=${format}`;
