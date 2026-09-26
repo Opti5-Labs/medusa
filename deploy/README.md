@@ -33,7 +33,7 @@ BOB_API_KEY=...          # optional, Inference-scoped; also install Bob Shell on
 BOB_MODE=live            # live | replay | off
 ```
 
-`setup.sh` adds `TRUST_FORWARDED_FOR=true`, `BOB_MODE=replay` and `ALLOWED_ORIGIN` if they are missing.
+`setup.sh` adds `TRUST_FORWARDED_FOR=true`, `BOB_MODE=live` and `ALLOWED_ORIGIN` if they are missing.
 
 ## 4. Install / update
 

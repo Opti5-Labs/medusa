@@ -47,10 +47,10 @@ the backend pipelines, never directly by the browser.
 |---|---|---|
 | Input | Built-in demo repo with a known, real bug | Public GitHub URL or zip |
 | Executes code? | Yes, only inside the sandbox | **Never** |
-| Investigation | Recorded Bob session (replay) | Granite |
+| Investigation | IBM Bob (live) and Granite, independently; a recorded Bob session replaces live Bob only with `BOB_MODE=replay` | IBM Bob (live) and Granite, independently |
 | Reproduce result | `reproduced` / `not_reproducible` | `plausible` + `confidence` |
 | Fix result | `passed` / `failed` per candidate | `not_applicable` |
-| UI label | "Recorded Bob session" for Bob output; sandbox results are live | "Analysis only. Code was not executed. Patches are not verified." |
+| UI label | Which investigator said what; "Recorded Bob session" only for a real replay; sandbox results are live | "Analysis only. Code was not executed. Patches are not verified." |
 
 ## Pipeline (OptiLearn path)
 
@@ -95,7 +95,7 @@ One revision round: a failing Granite candidate gets its failing checks and
 Verification (deterministic)
   │
   ▼
-Recommendation (deterministic ranking + recorded Bob explanation)
+Recommendation (deterministic ranking; the reason is built from the test results)
   │
   ▼
 Zip download with the chosen fix applied
