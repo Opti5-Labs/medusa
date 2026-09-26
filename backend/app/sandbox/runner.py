@@ -69,14 +69,39 @@ def _client():
     return docker.from_env()
 
 
-def docker_available() -> bool:
+def sandbox_unavailable_reason() -> str | None:
+    """
+    None when the sandbox can run now, else a specific user-facing reason.
+
+    Each step fails for a different, actionable cause — a missing SDK, a
+    stopped daemon and an unbuilt image are not the same problem, and saying
+    only "unavailable" sends people looking in the wrong place.
+    """
+    try:
+        import docker  # noqa: F401  # imported here so a missing SDK is its own case
+    except ImportError:
+        return (
+            "the Docker SDK is not installed in this server's environment "
+            "(pip install -r requirements.txt)"
+        )
     try:
         client = _client()
         client.ping()
+    except Exception as exc:  # noqa: BLE001 - any failure means unreachable
+        return f"the Docker daemon is not reachable ({type(exc).__name__}); is Docker running?"
+    try:
         client.images.get(config.SANDBOX_IMAGE)
-        return True
-    except Exception:  # noqa: BLE001 - any failure means unavailable
-        return False
+    except Exception as exc:  # noqa: BLE001 - not found, or the daemon refused
+        return (
+            f"the sandbox image {config.SANDBOX_IMAGE} is not available "
+            f"({type(exc).__name__}); build it with: "
+            f"docker build -t {config.SANDBOX_IMAGE} sandbox/optilearn"
+        )
+    return None
+
+
+def docker_available() -> bool:
+    return sandbox_unavailable_reason() is None
 
 
 def _container_kwargs(code_dir: Path) -> dict:

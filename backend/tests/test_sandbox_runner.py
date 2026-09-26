@@ -14,6 +14,31 @@ needs_docker = pytest.mark.skipif(
 )
 
 
+def test_unavailable_reason_names_the_actual_cause(monkeypatch):
+    """A missing SDK, a stopped daemon and an unbuilt image need different fixes."""
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(runner, "_client", boom)
+    reason = runner.sandbox_unavailable_reason()
+    assert reason is not None and "daemon is not reachable" in reason
+    assert runner.docker_available() is False
+
+    class _NoImage:
+        def ping(self):
+            return True
+
+        @property
+        def images(self):
+            raise RuntimeError("ImageNotFound")
+
+    monkeypatch.setattr(runner, "_client", lambda: _NoImage())
+    reason = runner.sandbox_unavailable_reason()
+    assert reason is not None and config.SANDBOX_IMAGE in reason
+    assert "docker build" in reason  # tells the user how to fix it
+
+
 def test_container_is_locked_down(tmp_path):
     kw = runner._container_kwargs(tmp_path)
     assert kw["network_disabled"] is True

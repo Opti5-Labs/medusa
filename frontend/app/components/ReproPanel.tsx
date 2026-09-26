@@ -39,6 +39,25 @@ function InvestigatorCard({ report }: { report: InvestigatorReport }) {
       </div>
       {report.root_cause && <p className="text-gray-700 dark:text-gray-300">{report.root_cause}</p>}
       {report.error && <p className="text-red-600 dark:text-red-400 break-words">{report.error}</p>}
+      {report.trigger_conditions && (
+        <p className="text-xs text-gray-600 dark:text-gray-400">
+          <span className="font-medium">Triggers when:</span> {report.trigger_conditions}
+        </p>
+      )}
+      {report.execution_trace.length > 0 && (
+        <ol className="text-xs text-gray-600 dark:text-gray-400 list-decimal list-inside space-y-0.5">
+          {report.execution_trace.map((step, i) => (
+            <li key={i} className="font-mono break-words">{step}</li>
+          ))}
+        </ol>
+      )}
+      {report.evidence.length > 0 && (
+        <ul className="text-xs text-gray-600 dark:text-gray-400 list-disc list-inside space-y-0.5">
+          {report.evidence.map((item, i) => (
+            <li key={i} className="font-mono break-words">{item}</li>
+          ))}
+        </ul>
+      )}
       <p className="text-xs text-gray-500">
         {report.confidence !== null && <>Self-reported confidence {Math.round(report.confidence * 100)}% (not used to pick a fix)</>}
         {report.proposed_fixes > 0 && <span className="ml-3">{report.proposed_fixes} proposed fix(es)</span>}
@@ -46,6 +65,20 @@ function InvestigatorCard({ report }: { report: InvestigatorReport }) {
       </p>
     </div>
   );
+}
+
+function firstSentence(text: string, maxLen = 160): string {
+  // A terminator only counts at a real sentence boundary (followed by
+  // whitespace or end of string) — otherwise "the value in .env.example"
+  // or "_resolve_hf_asr_model()" would cut the summary off mid-word.
+  const m = text.match(/^[^.!?]*[.!?](?=\s|$)/);
+  const sentence = (m ? m[0] : text).trim();
+  return sentence.length > maxLen ? sentence.slice(0, maxLen - 1).trimEnd() + "…" : sentence;
+}
+
+function elapsedSeconds(log: LogEvent[]): number | null {
+  if (log.length < 2) return null;
+  return Math.round((log[log.length - 1].ts - log[0].ts) * 10) / 10;
 }
 
 interface Props {
@@ -59,17 +92,25 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
   const status = attempt?.status ?? "running";
   const investigators = attempt?.investigator_source ? INVESTIGATORS[attempt.investigator_source] : null;
   const finished = attempt && attempt.status !== "running";
+  const elapsed = finished ? elapsedSeconds(log) : null;
 
   return (
     <section className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="font-semibold mr-1">Reproduce</h3>
         <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
+        {elapsed !== null && <span className="text-xs text-gray-500">({elapsed}s)</span>}
         {investigators && <Badge tone={investigators.tone}>{investigators.label}</Badge>}
         <Badge tone={mode === "sandboxed" ? "green" : "amber"}>
           {mode === "sandboxed" ? "Runs in isolated sandbox" : "Analysis only, not executed"}
         </Badge>
       </div>
+
+      {finished && attempt.root_cause && (
+        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 border-l-2 border-gray-300 dark:border-gray-700 pl-3">
+          {firstSentence(attempt.root_cause)}
+        </p>
+      )}
 
       <LogView events={log} />
 

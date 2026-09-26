@@ -4,6 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useCallback } from "react";
 import { postScanUpload, ScanResult } from "../../../lib/api";
+import AssessingStatus from "../../components/AssessingStatus";
+
+// The steps /api/scan/upload really runs for an uploaded archive.
+const SCAN_STEPS = [
+  "Uploading and extracting the archive",
+  "Selecting the source files to analyse",
+  "Reviewing the code for issues",
+];
 
 // NEXT_PUBLIC_MAX_ZIP_MB lets local devs raise the client-side check to match
 // a raised server limit (set in backend/.env). Defaults to 20 to match the
@@ -144,9 +152,11 @@ export default function ScanUploadPage() {
         )}
 
         {stage === "uploading" && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 animate-pulse">
-            Uploading, then reviewing the code. This can take up to 90 seconds.
-          </p>
+          <AssessingStatus
+            steps={SCAN_STEPS}
+            stepMs={2200}
+            note="Code is read as text and never executed. This can take up to 90 seconds."
+          />
         )}
 
         {error && (

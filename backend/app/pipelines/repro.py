@@ -21,8 +21,8 @@ from pathlib import Path
 from app.agents import panel
 from app.demo import optilearn
 from app.models.contracts import Issue, ReproAttempt
-from app.pipelines.context import select_files
-from app.sandbox.runner import SandboxResult, docker_available, run_checks
+from app.pipelines.context import select_files_for
+from app.sandbox.runner import SandboxResult, run_checks, sandbox_unavailable_reason
 from app.store import ReproRun, RunStore, ScanRecord
 from app.streaming import EventChannel
 
@@ -115,14 +115,31 @@ def _record_investigations(run: ReproRun, results) -> str | None:
     return panel.combined_root_cause(results)
 
 
+async def _triage(channel: EventChannel, issue: Issue, sandboxed: bool) -> None:
+    """Narrate the sandboxed-vs-reasoning decision that already picked this path."""
+    where = (
+        f" ({issue.file}::{issue.function})" if issue.file and issue.function else ""
+    )
+    await channel.emit(
+        "triage", "info", f"Checking reproduction coverage for '{issue.title}'{where}"
+    )
+    await channel.emit(
+        "triage",
+        "result",
+        "Bundled sandbox harness found — proceeding with a live reproduction."
+        if sandboxed
+        else "No bundled sandbox harness for this repository — proceeding with text-only analysis.",
+    )
+
+
 async def _run_sandboxed(run: ReproRun, issue: Issue) -> None:
     ch, attempt = run.channel, run.attempt
+    await _triage(ch, issue, sandboxed=True)
 
-    if not await asyncio.to_thread(docker_available):
+    reason = await asyncio.to_thread(sandbox_unavailable_reason)
+    if reason is not None:
         attempt.status = "error"
-        await ch.emit(
-            "sandbox", "error", "The sandbox is not available on this server."
-        )
+        await ch.emit("sandbox", "error", f"The sandbox is not available: {reason}.")
         return
 
     await ch.emit(
@@ -166,15 +183,14 @@ async def _run_sandboxed(run: ReproRun, issue: Issue) -> None:
 
 async def _run_reasoning(run: ReproRun, record: ScanRecord, issue: Issue) -> None:
     ch, attempt = run.channel, run.attempt
+    await _triage(ch, issue, sandboxed=False)
     await ch.emit(
         "medusa",
         "info",
         "Analysis only: this repository's code is read as text and never executed.",
     )
-    files = (
-        select_files(record.root, record.result.files_scanned, issue)
-        if record.root
-        else {}
+    files = select_files_for(
+        record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)
     )
     if not files:
         attempt.status = "error"

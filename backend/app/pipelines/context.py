@@ -81,3 +81,21 @@ def select_files(root: Path, scanned: list[str], issue: Issue) -> dict[str, str]
     for _, rel, text in scored[: _MAX_FILES - len(chosen)]:
         chosen[rel] = text
     return chosen
+
+
+def select_files_for(
+    root: Path | None, scanned: list[str], issue: Issue, scenario: str | None
+) -> dict[str, str]:
+    """
+    Files for a reasoning-mode investigation. The demo's own issues (other
+    than the sandboxed one) carry pre-bundled real source keyed by scenario,
+    since there is no extracted tree to read from for them; every other
+    reasoning-mode issue (github/zip) uses select_files() as usual.
+    """
+    if scenario:
+        from app.demo.loader import load_issue_context
+
+        bundled = load_issue_context(scenario)
+        if bundled:
+            return bundled
+    return select_files(root, scanned, issue) if root else {}
