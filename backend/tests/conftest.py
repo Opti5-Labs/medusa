@@ -19,6 +19,12 @@ _DEFAULTS: dict[str, object] = {
     "SCAN_MAX_FILES": 40,
     "SCAN_MAX_LINES": 6000,
     "SCAN_TIMEOUT_S": 90,
+    "ARCH_MAX_DISCOVERED_FILES": 20000,
+    "ARCH_MAX_PARSED_FILES": 400,
+    "ARCH_MAX_SOURCE_BYTES": 8_000_000,
+    "ARCH_MAX_SOURCE_LINES": 200000,
+    "ARCH_TIMEOUT_S": 75,
+    "ARCH_MAX_CONCURRENT": 2,
 }
 
 # All modules that import limit constants at module level (add more as needed)
@@ -29,6 +35,8 @@ _LIMIT_MODULES = [
     "app.ingest.github",
     "app.ingest.limits",
     "app.api.scan",
+    "app.architecture.inventory",
+    "app.pipelines.architecture",
 ]
 
 

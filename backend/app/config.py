@@ -71,6 +71,7 @@ RATE_SCANS_PER_WINDOW: int = 5
 RATE_REPRO_DEBUG_PER_WINDOW: int = 6
 RATE_ASK_PER_WINDOW: int = 6
 RATE_ASK_INSTANT_PER_WINDOW: int = 60  # instant answers call no model; generous
+RATE_ARCH_PER_WINDOW: int = 4
 RATE_WINDOW_SECONDS: int = 600  # 10 minutes
 
 # ── Timeouts ───────────────────────────────────────────────────────────────────
@@ -181,3 +182,29 @@ ASK_MAX_REMEMBERED_TURNS: int = 20  # question/answer turns stored per scan
 
 # ── In-memory store TTL ────────────────────────────────────────────────────────
 RUN_TTL_SECONDS: int = 1800  # 30 minutes
+
+# ── Architecture analysis ──────────────────────────────────────────────────────
+# Bounded static analysis of a scan's already-extracted tree. Separate from the
+# scan limits above: architecture needs broad structural coverage (directory
+# shape, manifests, imports) rather than per-line bug-hunting context, so it
+# gets its own, much larger, file/byte/line budget. See app/architecture/.
+ARCH_MAX_DISCOVERED_FILES: int = int(os.getenv("ARCH_MAX_DISCOVERED_FILES", "20000"))
+ARCH_MAX_PARSED_FILES: int = int(os.getenv("ARCH_MAX_PARSED_FILES", "400"))
+ARCH_TIER2_PARSED_FILES: int = 120  # partial-tier parse budget
+ARCH_MAX_SOURCE_BYTES: int = int(os.getenv("ARCH_MAX_SOURCE_BYTES", str(8_000_000)))
+ARCH_MAX_SOURCE_LINES: int = int(os.getenv("ARCH_MAX_SOURCE_LINES", "200000"))
+ARCH_MAX_FILE_BYTES: int = 400_000  # larger files are counted but not parsed
+ARCH_MAX_GRAPH_NODES: int = 5_000
+ARCH_MAX_GRAPH_EDGES: int = 20_000
+ARCH_MAX_COMPONENTS: int = 20
+ARCH_MAX_RELATIONSHIPS: int = 60
+ARCH_MAX_MERMAID_NODES: int = 24
+ARCH_MAX_MERMAID_EDGES: int = 60
+ARCH_MAX_MERMAID_CHARS: int = 12_000
+ARCH_REPORT_PATH_SAMPLE: int = 300  # cap on files_considered/parsed/skipped samples
+ARCH_TIMEOUT_S: int = int(os.getenv("ARCH_TIMEOUT_S", "75"))
+ARCH_MAX_CONCURRENT: int = int(os.getenv("ARCH_MAX_CONCURRENT", "2"))
+ARCH_MIN_COMPONENT_FILES: int = 2
+# Tree-sitter is not wired in yet (stdlib ast + regex only) — reserved for a
+# future drop-in extractor behind this flag.
+ARCH_USE_TREESITTER: bool = _env_bool("ARCH_USE_TREESITTER")
