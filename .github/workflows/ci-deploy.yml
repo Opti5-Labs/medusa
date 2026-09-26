@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           # Run the deploy.sh from this commit's archive, not whatever is on the server.
-          script="set -euo pipefail; a=\$(mktemp); d=\$(mktemp); trap 'rm -f \"\$a\" \"\$d\"' EXIT; curl -fsS --retry 3 -o \"\$a\" '$URL'; tar -xzOf \"\$a\" deploy/deploy.sh > \"\$d\"; bash \"\$d\" $SHA '$URL'"
+          script="set -eu; a=\$(mktemp); d=\$(mktemp); trap 'rm -f \"\$a\" \"\$d\"' EXIT; curl -fsS --retry 3 -o \"\$a\" '$URL'; tar -xzOf \"\$a\" deploy/deploy.sh > \"\$d\"; bash \"\$d\" $SHA '$URL'"
           params=$(jq -nc --arg c "$script" '{commands: [$c], executionTimeout: ["1800"]}')
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
