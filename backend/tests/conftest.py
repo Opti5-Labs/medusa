@@ -60,4 +60,9 @@ def _hermetic_limits(monkeypatch):
     monkeypatch.setattr("app.config.BOB_API_KEY", "")
     monkeypatch.setattr("app.config.BOB_MODE", "live")
     monkeypatch.setattr("app.config.BOB_BINARY", "bob-disabled-in-tests")
+    # Each test gets a fresh in-memory Bob budget; never the real budget file.
+    monkeypatch.setattr("app.config.BOB_BUDGET_FILE", "")
+    from app.agents import bob_budget
+
+    bob_budget.reset_for_tests()
     yield
