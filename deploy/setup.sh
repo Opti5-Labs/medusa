@@ -52,6 +52,24 @@ if grep -q '^BOB_MODE=live' /etc/medusa/env; then
   bob --version | head -1
 fi
 
+# General-repo execution: install gVisor and build the runner image when the
+# feature is on, or when EXEC_PREPARE=true (prepared and testable, still off).
+if grep -qE '^(ARBITRARY_EXECUTION|EXEC_PREPARE)=true' /etc/medusa/env; then
+  echo "==> gVisor + runner image"
+  if ! command -v runsc >/dev/null; then
+    curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor --yes -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+      > /etc/apt/sources.list.d/gvisor.list
+    apt-get update -q
+    apt-get install -y -q runsc
+  fi
+  if ! docker info --format '{{json .Runtimes}}' | grep -q '"runsc"'; then
+    runsc install
+    systemctl restart docker
+  fi
+  docker build -q -t medusa-pyrunner:latest "$APP/sandbox/pyrunner"
+fi
+
 echo "==> sandbox image"
 docker build -q -t medusa-optilearn:latest "$APP/sandbox/optilearn"
 
