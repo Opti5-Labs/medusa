@@ -237,6 +237,23 @@ export const postDebug = (issueId: string, candidates?: number) =>
 export const openDebugStream = (sessionId: string): EventSource =>
   new EventSource(`${BASE}/api/debug/${sessionId}/events`);
 
+/** GET /api/ask/status */
+export const getAskStatus = () => request<AskStatus>("/api/ask/status");
+
+/** POST /api/scan/{scan_id}/ask — omit issue_id to ask about the whole repo. */
+export const postAsk = (scanId: string, body: { question: string; issue_id?: string }) =>
+  request<AskStart>(`/api/scan/${encodeURIComponent(scanId)}/ask`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+/**
+ * GET /api/ask/{ask_id}/events — SSE stream (log, token, then done with an AskAnswer).
+ * Returns an EventSource; caller is responsible for closing it on unmount.
+ */
+export const openAskStream = (askId: string): EventSource =>
+  new EventSource(`${BASE}/api/ask/${encodeURIComponent(askId)}/events`);
+
 /** GET /api/debug/{session_id}/download?candidate_id= */
 export const getDebugDownloadUrl = (
   sessionId: string,
