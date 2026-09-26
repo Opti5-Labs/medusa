@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app import config
-from app.agents import granite
+from app.agents import bob, granite
 from app.ingest.limits import (
     _CODE_SUFFIXES,
     _CONFIG_DOC_SUFFIXES,
@@ -582,8 +582,9 @@ def build_user_prompt(
     truncated: bool,
     history: list[tuple[str, str]],
     sandbox_block: str | None,
+    limit: int | None = None,
 ) -> str:
-    limit = config.ASK_MAX_CONTEXT_CHARS + _PROMPT_SLACK_CHARS
+    limit = limit or config.ASK_MAX_CONTEXT_CHARS + _PROMPT_SLACK_CHARS
     history_text = _history_text(history)
     sandbox = sandbox_block
     for drop in ("nothing", "history", "sandbox"):
@@ -685,6 +686,7 @@ class Attempt:
     text: str | None
     error: str | None
     emitted: bool  # whether any token already reached the channel
+    unavailable: bool = False  # quota used up or not authorised: Bob may step in
 
 
 def _retrieve_sync(record: ScanRecord, question: str, issue: Issue | None) -> Retrieval:
@@ -742,6 +744,8 @@ async def _granite_attempt(run: AskRun, system: str, user: str) -> Attempt:
                     pieces.append(piece)
                     await run.channel.token(piece)
                     emitted = True
+    except granite.GraniteUnavailable as exc:
+        return Attempt(None, str(exc), emitted, unavailable=True)
     except granite.GraniteError as exc:
         return Attempt(None, str(exc), emitted)
     except TimeoutError:
@@ -829,10 +833,94 @@ async def _finish(
 # ── The run ───────────────────────────────────────────────────────────────────
 
 _UNEXPECTED = "Unexpected error while answering. Please try again."
-_NOT_CONFIGURED = (
-    "Granite is not configured on this server, so this question cannot be "
-    "answered. Questions like 'what are the issues?' still work."
+_NOT_CONFIGURED = "Granite is not configured on this server"
+_BOB_PREAMBLE = (
+    "You are an independent investigator. Answer the question about ONE repository "
+    "by reading the code only; nothing can be executed. Do not edit files or run "
+    "commands.\n\n"
 )
+_BOB_ENDING = (
+    '\n\nReply with ONLY one JSON object: {"answer": "<your markdown answer>"}.'
+)
+
+
+class BobQA(granite.LenientModel):
+    answer: str
+
+
+def _nobody_could(granite_reason: str, bob_reason: str) -> str:
+    return (
+        "Neither model could answer. "
+        f"Granite: {granite_reason.rstrip('.')}. Bob: {bob_reason}"
+    )
+
+
+def _bob_prompt(
+    record: ScanRecord,
+    issue: Issue | None,
+    question: str,
+    retrieval: Retrieval,
+    sandbox: str | None,
+) -> str:
+    fixed = _BOB_PREAMBLE + SYSTEM + "\n\n"
+    user = build_user_prompt(
+        record,
+        issue,
+        question,
+        retrieval.excerpts,
+        retrieval.map_text,
+        retrieval.truncated,
+        record.history,
+        sandbox,
+        limit=max(1, config.ASK_BOB_MAX_PROMPT_CHARS - len(fixed) - len(_BOB_ENDING)),
+    )
+    return fixed + user + _BOB_ENDING
+
+
+async def _bob_answer(
+    run: AskRun,
+    record: ScanRecord,
+    question: str,
+    issue: Issue | None,
+    retrieval: Retrieval,
+    sandbox: str | None,
+    granite_reason: str,
+) -> None:
+    if (reason := bob.live_unavailable_reason()) is not None:
+        return await _fail(run, question, issue, _nobody_could(granite_reason, reason))
+    await run.channel.emit(
+        "ask", "info", "Granite is unavailable, asking IBM Bob instead (read-only)"
+    )
+    files = {p.path: p.text for p in retrieval.picked}
+    answer = await bob.ask(
+        _bob_prompt(record, issue, question, retrieval, sandbox), files, BobQA
+    )
+    if answer.status != "ok" or not isinstance(answer.data, BobQA):
+        return await _fail(
+            run,
+            question,
+            issue,
+            _nobody_could(granite_reason, answer.error or "unknown error"),
+        )
+    await run.channel.token(answer.data.answer)
+    await _finish(
+        run,
+        record,
+        question,
+        issue,
+        retrieval,
+        answer.data.answer,
+        ranges={
+            p.path: [(1, max(1, len(p.text.splitlines())))] for p in retrieval.picked
+        },
+        answered_by="bob",
+        grounding="sandbox_verified" if sandbox is not None else "reasoning",
+        cost=answer.cost,
+        notice=(
+            f"Granite was unavailable ({granite_reason.rstrip('.')}); "
+            "IBM Bob answered instead."
+        ),
+    )
 
 
 def _error_answer(
@@ -868,8 +956,6 @@ async def _answer(
         record.remember(question, run.answer.answer)
         return
 
-    if not granite.is_configured():
-        return await _fail(run, question, issue, _NOT_CONFIGURED)
     try:
         retrieval = await _retrieve(record, question, issue)
     except AskUnavailable as exc:
@@ -892,7 +978,20 @@ async def _answer(
         record.history,
         sandbox,
     )
-    attempt = await _granite_attempt(run, SYSTEM, user)
+    if granite.is_configured():
+        attempt = await _granite_attempt(run, SYSTEM, user)
+    else:
+        attempt = Attempt(None, _NOT_CONFIGURED, False, unavailable=True)
+    if attempt.text is None and attempt.unavailable and not attempt.emitted:
+        return await _bob_answer(
+            run,
+            record,
+            question,
+            issue,
+            retrieval,
+            sandbox,
+            attempt.error or _UNEXPECTED,
+        )
     if attempt.text is None:
         return await _fail(run, question, issue, attempt.error or _UNEXPECTED)
     await _finish(

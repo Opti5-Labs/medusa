@@ -7,6 +7,7 @@ import pytest
 
 from app import config
 from app.agents import granite
+from app.agents.bob import BobAnswer
 from app.models.contracts import (
     AskAnswer,
     DebugSession,
@@ -896,26 +897,160 @@ def _assert_error(run: ask.AskRun, events, message: str) -> None:
     assert message in _logs(run, "error")
 
 
-async def test_granite_unavailable_becomes_the_error_answer(
+class FakeBob:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, str]]] = []
+
+
+def _fake_bob(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: BobAnswer | None = None,
+    unavailable: str | None = None,
+) -> FakeBob:
+    fake = FakeBob()
+
+    async def fake_ask(prompt, files, schema, timeout_s=None) -> BobAnswer:
+        fake.calls.append((prompt, files))
+        return answer or BobAnswer(
+            "ok", data=ask.BobQA(answer="Bob says hi"), cost=0.05
+        )
+
+    monkeypatch.setattr(ask.bob, "ask", fake_ask)
+    monkeypatch.setattr(ask.bob, "live_unavailable_reason", lambda: unavailable)
+    return fake
+
+
+async def test_granite_unavailable_falls_back_to_bob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_granite = _fake_model(
+        monkeypatch, (), then=granite.GraniteUnavailable("quota used up")
+    )
+    fake_bob = _fake_bob(monkeypatch)
+    record = _repo(tmp_path)
+    run, events = await _run(RunStore(), record)
+    assert len(fake_granite.prompts) == 1 and len(fake_bob.calls) == 1
+    prompt, files = fake_bob.calls[0]
+    assert prompt.startswith("You are an independent investigator.")
+    assert prompt.endswith('{"answer": "<your markdown answer>"}.')
+    assert "<question>" in prompt and set(files) == {"parser.py"}
+    assert [json.loads(d)["text"] for n, d in events if n == "token"] == ["Bob says hi"]
+    answer = _final(events)
+    assert (answer.answered_by, answer.answer, answer.cost) == (
+        "bob",
+        "Bob says hi",
+        0.05,
+    )
+    assert answer.notice == (
+        "Granite was unavailable (quota used up); IBM Bob answered instead."
+    )
+    assert "Granite is unavailable, asking IBM Bob instead (read-only)" in _logs(
+        run, "info"
+    )
+    assert record.history == [(QUESTION, "Bob says hi")]
+
+
+async def test_unconfigured_granite_goes_to_bob_without_calling_granite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_granite = _fake_model(monkeypatch)
+    monkeypatch.setattr(ask.granite, "is_configured", lambda: False)
+    fake_bob = _fake_bob(monkeypatch)
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    assert fake_granite.prompts == [] and len(fake_bob.calls) == 1
+    answer = _final(events)
+    assert answer.answered_by == "bob"
+    assert "Granite is not configured on this server" in (answer.notice or "")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [granite.GraniteError("timed out"), granite.GraniteRateLimited("busy")],
+)
+async def test_other_granite_failures_never_call_bob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    _fake_model(monkeypatch, (), then=failure)
+    fake_bob = _fake_bob(monkeypatch)
+    run, events = await _run(RunStore(), _repo(tmp_path))
+    _assert_error(run, events, str(failure))
+    assert fake_bob.calls == []
+
+
+async def test_granite_timeout_never_calls_bob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_model(monkeypatch, (), hang=True)
+    monkeypatch.setattr(config, "ASK_TIMEOUT_S", 0.05)
+    fake_bob = _fake_bob(monkeypatch)
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    assert "took longer than" in (_final(events).error or "")
+    assert fake_bob.calls == []
+
+
+async def test_granite_empty_answer_never_calls_bob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_model(monkeypatch, ("  ",))
+    fake_bob = _fake_bob(monkeypatch)
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    assert _final(events).error == "The model returned an empty answer."
+    assert fake_bob.calls == []
+
+
+async def test_unavailable_after_a_token_never_calls_bob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_model(monkeypatch, ("part",), then=granite.GraniteUnavailable("quota"))
+    fake_bob = _fake_bob(monkeypatch)
+    run, events = await _run(RunStore(), _repo(tmp_path))
+    _assert_error(run, events, "quota")
+    assert fake_bob.calls == []
+
+
+async def test_bob_unavailable_names_both_reasons_and_skips_the_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
+    fake_bob = _fake_bob(monkeypatch, unavailable="BOB_API_KEY is not set.")
     record = _repo(tmp_path)
     run, events = await _run(RunStore(), record)
-    _assert_error(run, events, "quota used up")
-    assert record.history == []
+    _assert_error(
+        run,
+        events,
+        "Neither model could answer. Granite: quota used up. "
+        "Bob: BOB_API_KEY is not set.",
+    )
+    assert fake_bob.calls == [] and record.history == []
 
 
-async def test_unconfigured_granite_says_so_and_still_serves_issue_lists(
+async def test_bob_error_names_both_reasons(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(ask.granite, "is_configured", lambda: False)
-    record = _repo(tmp_path)
-    run, events = await _run(RunStore(), record)
-    _assert_error(run, events, ask._NOT_CONFIGURED)
-    assert "Questions like 'what are the issues?' still work." in ask._NOT_CONFIGURED
-    _, events = await _run(RunStore(), record, "what are the issues?")
-    assert _final(events).error is None
+    _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
+    fake_bob = _fake_bob(monkeypatch, BobAnswer("error", error="Bob timed out"))
+    run, events = await _run(RunStore(), _repo(tmp_path))
+    _assert_error(
+        run,
+        events,
+        "Neither model could answer. Granite: quota used up. Bob: Bob timed out",
+    )
+    assert len(fake_bob.calls) == 1
+
+
+async def test_bob_citations_are_validated_against_the_picked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
+    text = "See [parser.py:2] and [ghost.py:1] and [parser.py:99]."
+    _fake_bob(monkeypatch, BobAnswer("ok", data=ask.BobQA(answer=text), cost=0.01))
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    answer = _final(events)
+    assert answer.answer == "See [parser.py:2] and  and [parser.py]."
+    assert [(c.file, c.line) for c in answer.citations] == [
+        ("parser.py", 2),
+        ("parser.py", None),
+    ]
 
 
 async def test_missing_repo_files_become_the_error_answer(
