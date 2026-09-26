@@ -9,6 +9,7 @@ app.architecture.inventory / extract_python — no filesystem access, no
 network, fully deterministic given the same inputs.
 """
 
+import posixpath
 import re
 from dataclasses import dataclass
 
@@ -183,6 +184,10 @@ _DIR_RULE_BY_SEGMENT: dict[str, tuple[str, str]] = {
 
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
+# Grouping key type for components produced by _split_dominant_package.
+_MODULE = "module"
+_SPLIT_MIN_MODULES = 3
+
 
 def _slugify(text: str, used: set[str]) -> str:
     base = _SLUG_RE.sub("_", text.lower()).strip("_-")[:48] or "component"
@@ -226,6 +231,63 @@ def _group_key(rel_path: str, package_root: str) -> tuple[str, str, str]:
     return (package_root, "unknown", fallback)
 
 
+def _common_dir(paths: list[str]) -> str:
+    """Deepest directory shared by every path ("" when they only share the root)."""
+    dirs = [p.rsplit("/", 1)[0] if "/" in p else "" for p in paths]
+    if any(d == "" for d in dirs):
+        return ""
+    return posixpath.commonpath(dirs)
+
+
+def _split_dominant_package(
+    groups: dict[tuple[str, str, str], list[FileRecord]],
+    file_facts: dict[str, FileFacts],
+) -> dict[tuple[str, str, str], list[FileRecord]]:
+    """
+    Directory grouping works when a repo has several top-level areas (api/,
+    services/, db/...). A library usually keeps all its code in one package
+    (src/<pkg>/*.py), which would collapse into a single box with no edges. When
+    one plain directory group holds most of the parsed source, split it into one
+    component per module (file) or subpackage directly under that package.
+    """
+    parsed_total = sum(
+        1 for ms in groups.values() for m in ms if m.rel_path in file_facts
+    )
+    for key, members in groups.items():
+        pkg, ctype, label = key
+        if ctype != "unknown":
+            continue
+        source = [m for m in members if m.rel_path in file_facts]
+        if len(source) < _SPLIT_MIN_MODULES or 2 * len(source) < parsed_total:
+            continue
+        base = _common_dir([m.rel_path for m in source])
+        package_name = base.rsplit("/", 1)[-1] if base else ""
+        buckets: dict[str, list[FileRecord]] = {}
+        for m in members:
+            prefix = f"{base}/" if base else ""
+            rest = m.rel_path[len(prefix) :] if m.rel_path.startswith(prefix) else ""
+            parts = rest.split("/") if rest else []
+            if len(parts) > 1:
+                name = parts[0]  # a subpackage
+            elif parts and parts[0].endswith(".py") and parts[0] != "__init__.py":
+                name = parts[0][: -len(".py")]  # a module
+            else:
+                name = ""  # __init__.py, py.typed and other package-level files
+            buckets.setdefault(name, []).append(m)
+        modules = [n for n in buckets if n]
+        if len(modules) < _SPLIT_MIN_MODULES:
+            continue
+        split = {k: v for k, v in groups.items() if k != key}
+        for name, ms in buckets.items():
+            if name:
+                module_label = f"{package_name}.{name}" if package_name else name
+            else:
+                module_label = package_name or label
+            split[(pkg, _MODULE, module_label)] = ms
+        return split  # only the dominant group is split
+    return groups
+
+
 @dataclass
 class GroupingResult:
     components: list[ArchitectureComponent]
@@ -248,6 +310,7 @@ def group_components(
         pkg = _package_root_for(f.rel_path, package_roots)
         key = _group_key(f.rel_path, pkg)
         groups.setdefault(key, []).append(f)
+    groups = _split_dominant_package(groups, file_facts)
 
     multi_package = len({k[0] for k in groups}) > 1
     used_ids: set[str] = set()
@@ -259,7 +322,12 @@ def group_components(
         pkg, ctype, label = key
         file_count = len(members)
         has_entrypoint = any(m.rel_path in entry_paths for m in members)
-        if file_count < ARCH_MIN_COMPONENT_FILES and not has_entrypoint:
+        # A module is meaningful on its own; other groups need a few files.
+        if (
+            file_count < ARCH_MIN_COMPONENT_FILES
+            and not has_entrypoint
+            and ctype != _MODULE
+        ):
             continue
         rank_sum = sum(ranks.get(m.rel_path, 0.0) for m in members)
         scored_groups.append((key, members, rank_sum, has_entrypoint))
@@ -276,8 +344,9 @@ def group_components(
         )
         display_label = f"{pkg}: {label}" if multi_package and pkg else label
         comp_id = _slugify(f"{pkg}_{label}" if pkg else label, used_ids)
-        matched_rule = ctype != "unknown"
-        confidence = 0.8 if matched_rule else 0.5
+        is_module = ctype == _MODULE
+        matched_rule = ctype not in ("unknown", _MODULE)
+        confidence = 0.8 if matched_rule else 0.6 if is_module else 0.5
         paths_sample = [m.rel_path for m in members_sorted[:10]]
         evidence = [
             EvidenceRef(path=m.rel_path, note="representative file in this component")
@@ -290,6 +359,8 @@ def group_components(
             + (
                 f" matching the '{label}' convention"
                 if matched_rule
+                else f" in module or subpackage '{label}'"
+                if is_module
                 else " grouped by directory"
             )
             + (
@@ -302,7 +373,7 @@ def group_components(
         component = ArchitectureComponent(
             id=comp_id,
             label=display_label[:60],
-            type=ctype if ctype != "unknown" else "unknown",
+            type="library" if is_module else ctype,
             description=description,
             paths=paths_sample,
             evidence=evidence,

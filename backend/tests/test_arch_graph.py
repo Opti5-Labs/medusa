@@ -157,3 +157,62 @@ def test_relationships_never_self_referential_from_same_component():
     path_to_component = {"a.py": "same", "b.py": "same"}
     rels = graph_mod.build_relationships(edges, path_to_component)
     assert rels == []
+
+
+# ── Single-package libraries are split into modules ────────────────────────────
+
+
+def _library(files: dict[str, str]):
+    records = [_record(p) for p in files]
+    facts = {p: extract(src, p) for p, src in files.items() if p.endswith(".py")}
+    edges = graph_mod.build_edges(facts)
+    ranks = {p: 0.1 for p in facts}
+    grouping = graph_mod.group_components(records, facts, ranks, ManifestFacts())
+    relationships = graph_mod.build_relationships(edges, grouping.path_to_component)
+    return grouping, relationships
+
+
+_FLAT_LIBRARY = {
+    "src/pkg/__init__.py": "from .signer import Signer\n",
+    "src/pkg/exc.py": "class BadSignature(Exception): ...\n",
+    "src/pkg/encoding.py": "from .exc import BadSignature\n",
+    "src/pkg/signer.py": "from .encoding import x\nfrom .exc import BadSignature\n",
+    "src/pkg/serializer.py": "from .signer import Signer\n",
+    "tests/test_signer.py": "from pkg.signer import Signer\n",
+    "tests/test_serializer.py": "from pkg.serializer import S\n",
+}
+
+
+def test_single_package_library_is_split_into_module_components():
+    grouping, relationships = _library(_FLAT_LIBRARY)
+    labels = {c.label for c in grouping.components}
+    assert {"pkg.exc", "pkg.encoding", "pkg.signer", "pkg.serializer", "pkg"} <= labels
+    modules = [c for c in grouping.components if c.label.startswith("pkg.")]
+    assert all(c.type == "library" for c in modules)
+    by_id = {c.id: c.label for c in grouping.components}
+    edges = {(by_id[r.source], by_id[r.target]) for r in relationships}
+    assert ("pkg.signer", "pkg.encoding") in edges
+    assert ("pkg.serializer", "pkg.signer") in edges
+    assert ("pkg.encoding", "pkg.exc") in edges
+
+
+def test_multi_area_app_keeps_directory_grouping():
+    files = {
+        "app/routes/users.py": "from app.services import db\n",
+        "app/routes/orders.py": "from app.services import db\n",
+        "app/services/db.py": "x = 1\n",
+        "app/services/cache.py": "x = 1\n",
+    }
+    grouping, _ = _library(files)
+    assert {c.type for c in grouping.components} == {"api_layer", "service"}
+
+
+def test_tiny_package_is_not_split():
+    files = {
+        "src/tiny/__init__.py": "from ._native import escape\n",
+        "src/tiny/_native.py": "def escape(s): return s\n",
+        "tests/test_a.py": "import tiny\n",
+        "tests/test_b.py": "import tiny\n",
+    }
+    grouping, _ = _library(files)
+    assert not any(c.type == "library" for c in grouping.components)
