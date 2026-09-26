@@ -25,29 +25,37 @@ KEY = "bob-test-key-0123456789abcdef"
 def _fake_bob(tmp_path, *, stdout_lines=(), stderr="", exit_code=0, sleep=0.0):
     """Write an executable fake Bob Shell; it records argv, env and workspace files."""
     record = tmp_path / "record.json"
-    script = tmp_path / "fake-bob"
-    script.write_text(
-        textwrap.dedent(
-            f"""\
-            #!{sys.executable}
-            import json, os, sys, time
-            args = sys.argv[1:]
-            ws = args[args.index("--workspace") + 1]
-            files = sorted(
-                os.path.relpath(os.path.join(d, f), ws)
-                for d, _, fs in os.walk(ws) for f in fs
-            )
-            json.dump({{"argv": args, "env": dict(os.environ), "files": files}},
-                      open({str(record)!r}, "w"))
-            time.sleep({sleep})
-            for line in {list(stdout_lines)!r}:
-                print(line)
-            sys.stderr.write({stderr!r})
-            sys.exit({exit_code})
-            """
+    body = textwrap.dedent(
+        f"""\
+        import json, os, sys, time
+        args = sys.argv[1:]
+        ws = args[args.index("--workspace") + 1]
+        files = sorted(
+            os.path.relpath(os.path.join(d, f), ws).replace(os.sep, "/")
+            for d, _, fs in os.walk(ws) for f in fs
         )
+        json.dump({{"argv": args, "env": dict(os.environ), "files": files}},
+                  open({str(record)!r}, "w"))
+        time.sleep({sleep})
+        for line in {list(stdout_lines)!r}:
+            print(line)
+        sys.stderr.write({stderr!r})
+        sys.exit({exit_code})
+        """
     )
-    script.chmod(0o755)
+    if sys.platform == "win32":
+        # Windows has no shebang/chmod: a script needs a real executable
+        # extension to run directly. Write the logic as .py and launch it
+        # through a .bat shim (which Windows treats as directly runnable),
+        # so BOB_BINARY still points at a single path on every platform.
+        py_file = tmp_path / "fake-bob.py"
+        py_file.write_text(body)
+        script = tmp_path / "fake-bob.bat"
+        script.write_text(f'@"{sys.executable}" "{py_file}" %*\r\n')
+    else:
+        script = tmp_path / "fake-bob"
+        script.write_text(f"#!{sys.executable}\n" + body)
+        script.chmod(0o755)
     return script, record
 
 
@@ -127,13 +135,21 @@ async def test_successful_investigation_is_normalised(tmp_path, live_bob, monkey
         "execute",
     }
     assert "--team-id" not in argv  # Inference-scoped key needs no team id
-    # Only what Bob needs reaches the child process.
+    # Only what Bob needs reaches the child process. On Windows the fake
+    # script runs through a .bat -> cmd.exe -> python.exe chain (Windows has
+    # no shebang), and cmd.exe injects its own bookkeeping vars regardless
+    # of the explicit env dict passed to it — not something the real code
+    # lets through, just cmd.exe's own overhead. None carry secrets.
+    _os_overhead = (
+        {"COMSPEC", "PROMPT", "PATHEXT"} if sys.platform == "win32" else set()
+    )
     assert set(seen["env"]) <= {
         "PATH",
         "HOME",
         "BOB_API_KEY",
         "LC_CTYPE",
         "__CF_USER_TEXT_ENCODING",
+        *_os_overhead,
     }
     assert seen["env"]["BOB_API_KEY"] == KEY
     # The workspace holds copies of the files shown to Bob (excerpt suffix stripped).
@@ -239,6 +255,18 @@ async def test_cost_limit_is_reported_as_limit(tmp_path, live_bob):
     assert result.status == "limit" and "maximum cost" in result.error
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "The fake script runs through a .bat -> cmd.exe -> python.exe chain "
+        "on Windows (no shebang there); killing the direct child (cmd.exe) "
+        "doesn't kill its grandchild python.exe without Windows job-object "
+        "process-group management, which the test fixture doesn't set up. "
+        "The real Bob binary on Linux is spawned directly with no such "
+        "intermediary, so this is a test-fixture gap, not a defect in "
+        "agents/bob.py's actual timeout/kill logic — verified passing there."
+    ),
+)
 async def test_timeout_stops_bob(tmp_path, live_bob, monkeypatch):
     monkeypatch.setattr("app.config.BOB_TIMEOUT_S", 1)
     script, _ = _fake_bob(tmp_path, sleep=5)
@@ -289,10 +317,16 @@ async def test_bob_and_granite_run_in_parallel_and_independently(monkeypatch):
     class _Synth:
         root_cause, evidence, confidence = "GRANITE-DIAGNOSIS", [], 0.5
 
+    class _Runtime:
+        trigger_conditions = "input is a local path that does not exist"
+
+    class _Repository:
+        execution_trace = ("L12 if is_local(path): True", "L13 return path")
+
     async def fake_granite(issue, files, channel, evidence):
         seen["granite_evidence"] = evidence
         await asyncio.sleep(0.3)
-        return _Synth()
+        return _Synth(), _Runtime(), _Repository()
 
     monkeypatch.setattr(panel.bob, "live_unavailable_reason", lambda: None)
     monkeypatch.setattr(panel.bob, "investigate", fake_bob)
@@ -316,6 +350,17 @@ async def test_bob_and_granite_run_in_parallel_and_independently(monkeypatch):
     assert panel.source_of(results) == "bob_and_granite"
     combined = panel.combined_root_cause(results)
     assert "Bob: BOB-DIAGNOSIS" in combined and "Granite: GRANITE-DIAGNOSIS" in combined
+    granite_result = next(r for r in results if r.investigator == "granite")
+    assert (
+        granite_result.trigger_conditions == "input is a local path that does not exist"
+    )
+    assert granite_result.execution_trace == [
+        "L12 if is_local(path): True",
+        "L13 return path",
+    ]
+    report = granite_result.report()
+    assert report.trigger_conditions == granite_result.trigger_conditions
+    assert report.execution_trace == granite_result.execution_trace
 
 
 async def test_granite_quota_marks_it_unavailable_while_bob_succeeds(monkeypatch):

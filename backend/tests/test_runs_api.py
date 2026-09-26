@@ -48,7 +48,7 @@ def fake_sandbox(monkeypatch):
 
     for mod in ("app.pipelines.repro", "app.pipelines.debug"):
         monkeypatch.setattr(f"{mod}.run_checks", fake_run_checks)
-        monkeypatch.setattr(f"{mod}.docker_available", lambda: True)
+        monkeypatch.setattr(f"{mod}.sandbox_unavailable_reason", lambda: None)
 
 
 @pytest.fixture
@@ -104,6 +104,8 @@ async def test_demo_repro_reproduces_in_sandbox(client, fake_sandbox):
     assert done["investigator_source"] == "unavailable"  # no Granite, no golden run
     assert any(e["source"] == "sandbox" and e["level"] == "result" for e in logs)
     assert done["confidence"] is None  # never on sandboxed results
+    assert logs[0]["source"] == "triage"
+    assert "harness found" in logs[1]["message"]
 
 
 async def test_demo_debug_race_verifies_and_recommends(client, fake_sandbox):
@@ -165,7 +167,7 @@ async def test_bug_gate_closed_when_not_reproducible(client, monkeypatch):
 
     for mod in ("app.pipelines.repro", "app.pipelines.debug"):
         monkeypatch.setattr(f"{mod}.run_checks", always_passes)
-        monkeypatch.setattr(f"{mod}.docker_available", lambda: True)
+        monkeypatch.setattr(f"{mod}.sandbox_unavailable_reason", lambda: None)
     issue_id = await _demo_issue(client)
     session = (
         await client.post(f"/api/issues/{issue_id}/debug", json={"candidates": 2})
@@ -177,12 +179,57 @@ async def test_bug_gate_closed_when_not_reproducible(client, monkeypatch):
 
 
 async def test_sandbox_unavailable_is_a_visible_error(client, monkeypatch):
-    monkeypatch.setattr("app.pipelines.repro.docker_available", lambda: False)
+    monkeypatch.setattr(
+        "app.pipelines.repro.sandbox_unavailable_reason",
+        lambda: (
+            "the Docker daemon is not reachable (DockerException); is Docker running?"
+        ),
+    )
     issue_id = await _demo_issue(client)
     attempt = (await client.post(f"/api/issues/{issue_id}/repro")).json()
     logs, done = await _events(client, f"/api/repro/{attempt['attempt_id']}/events")
     assert done["status"] == "error"
-    assert any(e["level"] == "error" for e in logs)
+    # The specific cause reaches the user, not just "unavailable": a missing
+    # SDK, a stopped daemon and an unbuilt image need different fixes.
+    assert any(
+        e["level"] == "error" and "Docker daemon is not reachable" in e["message"]
+        for e in logs
+    )
+
+
+async def test_demo_has_six_issues_with_correct_per_issue_mode(client):
+    scan = (await client.post("/api/scan", json={"source": "demo"})).json()
+    assert len(scan["issues"]) == 6
+    whisper = next(i for i in scan["issues"] if i["file"].endswith("whisper_client.py"))
+    others = [i for i in scan["issues"] if i is not whisper]
+    assert whisper["mode"] == "sandboxed"
+    assert len(others) == 5
+    assert all(i["mode"] == "reasoning" for i in others)
+    # Every non-Whisper issue links to the real commit that fixed it.
+    assert all(
+        i["github_url"]
+        and i["github_url"].startswith("https://github.com/Ilakiancs/OptiLearn/commit/")
+        for i in others
+    )
+
+
+async def test_demo_reasoning_issue_gets_real_bundled_source(client):
+    """The 5 non-Whisper demo issues have no sandbox harness, but they are not
+    an honest dead end either: real source (pinned to the commit before each
+    fix) is bundled for them, so the investigation actually has code to read."""
+    scan = (await client.post("/api/scan", json={"source": "demo"})).json()
+    issue = next(i for i in scan["issues"] if i["mode"] == "reasoning")
+    attempt = (await client.post(f"/api/issues/{issue['id']}/repro")).json()
+    assert attempt["mode"] == "reasoning"
+
+    _, done = await _events(client, f"/api/repro/{attempt['attempt_id']}/events")
+    assert done["status"] == "error"  # Granite/Bob are unavailable in this test env
+    # The failure must be "no investigator", never "no source files" — that
+    # would mean the bundled context for this issue failed to load.
+    assert done["root_cause"] is None
+    assert "No investigator could analyse this issue" in "".join(
+        e["message"] for e in done["log"] if e["level"] == "error"
+    )
 
 
 async def test_general_repo_repro_without_granite_errors_visibly(client):
@@ -373,14 +420,25 @@ async def test_bob_key_never_reaches_the_client(
     client, fake_sandbox, monkeypatch, tmp_path
 ):
     """The key is never in any API response or event, even when Bob echoes it in an error."""
+    import sys as _sys
+
     secret = "bob-secret-key-DO-NOT-LEAK-0123456789"
-    script = tmp_path / "fake-bob"
-    script.write_text(
-        f"#!{__import__('sys').executable}\nimport os, sys\n"
+    body = (
+        "import os, sys\n"
         "sys.stderr.write('Error: Request Failed. Invalid or expired API key ' + os.environ['BOB_API_KEY'])\n"
         "sys.exit(1)\n"
     )
-    script.chmod(0o755)
+    if _sys.platform == "win32":
+        # Windows has no shebang/chmod — see tests/test_bob.py's _fake_bob
+        # for the same .bat -> python.exe shim, used here for consistency.
+        py_file = tmp_path / "fake-bob.py"
+        py_file.write_text(body)
+        script = tmp_path / "fake-bob.bat"
+        script.write_text(f'@"{_sys.executable}" "{py_file}" %*\r\n')
+    else:
+        script = tmp_path / "fake-bob"
+        script.write_text(f"#!{_sys.executable}\n" + body)
+        script.chmod(0o755)
     monkeypatch.setattr("app.config.BOB_API_KEY", secret)
     monkeypatch.setattr("app.config.BOB_BINARY", str(script))
 

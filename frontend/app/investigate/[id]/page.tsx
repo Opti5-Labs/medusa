@@ -146,7 +146,9 @@ function Investigate() {
   useEffect(() => setScan(loadScan(scanId)), [scanId]);
 
   const issue: Issue | undefined = scan?.issues.find((i) => i.id === issueId);
-  const mode: Mode = scan?.repo_source === "demo" ? "sandboxed" : "reasoning";
+  // Per-issue, not per-scan: the demo mixes one sandboxed issue with several
+  // reasoning-mode ones, so repo_source alone isn't enough to tell.
+  const mode: Mode = issue?.mode ?? "reasoning";
 
   const startDebug = useCallback(async () => {
     setStartError(null);
@@ -348,7 +350,7 @@ function Investigate() {
             </p>
           )}
 
-          <div className={`grid gap-3 ${visible.length > 2 ? "md:grid-cols-2 xl:grid-cols-3" : "md:grid-cols-2"}`}>
+          <div className="grid gap-3 sm:grid-cols-2">
             {visible.map((c) => (
               <CandidatePanel
                 key={c.candidate_id}

@@ -29,9 +29,9 @@ from app.agents.results import CandidateFix, InvestigatorResult
 from app.demo import optilearn
 from app.models.contracts import DebugDone, DebugSession, FixAttempt, Issue
 from app.pipelines import verify
-from app.pipelines.context import select_files
+from app.pipelines.context import select_files_for
 from app.pipelines.repro import is_sandboxed, run_baseline, runtime_evidence
-from app.sandbox.runner import SandboxResult, docker_available, run_checks
+from app.sandbox.runner import SandboxResult, run_checks, sandbox_unavailable_reason
 from app.store import DebugRun, RunStore, ScanRecord
 from app.streaming import EventChannel
 
@@ -383,10 +383,9 @@ def _granite_reviser(
 
 async def _run_sandboxed(store: RunStore, run: DebugRun, issue: Issue) -> None:
     ch = run.channel
-    if not await asyncio.to_thread(docker_available):
-        await ch.emit(
-            "sandbox", "error", "The sandbox is not available on this server."
-        )
+    reason = await asyncio.to_thread(sandbox_unavailable_reason)
+    if reason is not None:
+        await ch.emit("sandbox", "error", f"The sandbox is not available: {reason}.")
         for c in run.session.candidates:
             c.sandbox_status, c.error = "failed", "Sandbox unavailable."
         return
@@ -449,10 +448,8 @@ async def _run_reasoning(
     await ch.emit(
         "medusa", "info", "Analysis only: patches are proposed, never applied or run."
     )
-    files = (
-        select_files(record.root, record.result.files_scanned, issue)
-        if record.root
-        else {}
+    files = select_files_for(
+        record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)
     )
     if not files:
         await ch.emit(

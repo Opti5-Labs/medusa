@@ -19,9 +19,75 @@
       "function": "_resolve_hf_asr_model",
       "line": 41,
       "github_url": null
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "scenario": "cache_key",
+      "title": "Wrong translation cache key mixes up languages",
+      "description": "explain_material() and ask_question() cache a material's translated text under _translation_cache[body.material_id] — keyed only by material, not by language. A student who requests material X explained in French (cached under key \"X\") and later requests the same material in Arabic gets a cache hit on \"X\" and receives the French text back as if it were the Arabic explanation. Silent wrong-language output, no crash — easy to miss unless you check which language actually came back. Analysis only in this demo: the bundled excerpt is real code from the repo, read as text, not executed.",
+      "priority": "Medium",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/app/api/routes/feature1.py",
+      "function": "explain_material",
+      "line": 1325,
+      "github_url": "https://github.com/Ilakiancs/OptiLearn/commit/91cb9052f55501b94077ba0d48755d966ab9ca44"
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "scenario": "persona_call",
+      "title": "Persona chat depends on an unnecessary external API call",
+      "description": "start_persona_call() POSTs to https://api.bey.dev/v1/calls on every persona-chat start just to mint a session-specific call_id, then builds the chat URL as bey.chat/{call_id} — even though agent_ids are static, pre-created constants already sitting in the PERSONAS list, and bey.chat/{agent_id} works directly, no call needed. Every persona-chat start incurs a network round-trip to a third-party API with its own except Exception: raise HTTPException(502, ...), so any BEY API hiccup (timeout, rate limit, outage) breaks the entire persona-chat feature for a URL that never needed the call. Analysis only in this demo: the bundled file is the real route, read as text, not executed.",
+      "priority": "High",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/app/api/routes/persona.py",
+      "function": "start_persona_call",
+      "line": 146,
+      "github_url": "https://github.com/Ilakiancs/OptiLearn/commit/838fa3a177c58795311d4b14c6dffceaab09fae3"
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "scenario": "offline_toggle",
+      "title": "Force-offline toggle ignored by the network status check",
+      "description": "check_network_status() branches purely on the static .env value USE_LOCAL_OLLAMA and always returns connected: True — it never calls _is_force_offline(), even though that function (and the runtime \"force offline\" toggle a teacher can flip in the UI) is defined right above it in the same file. A teacher in a classroom with no internet flips \"force offline,\" but the status check still reports based on whatever USE_LOCAL_OLLAMA happens to be in .env, so the app can keep believing cloud/26B routing is available and try to use it — defeating the toggle. Analysis only in this demo: the bundled excerpt is real code from the repo, read as text, not executed.",
+      "priority": "High",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/app/services/model_client.py",
+      "function": "check_network_status",
+      "line": 361,
+      "github_url": "https://github.com/Ilakiancs/OptiLearn/commit/2ee473b57f362ceb293b0f01da6cda1375b25b1c"
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "scenario": "thinking_config",
+      "title": "Wrong exception type swallowed in the 26B thinking-config fallback",
+      "description": "stream_26b() builds a pydantic ThinkingConfig(**thinking_cfg_kwargs) inside a try/except TypeError meant to fall back on failure — but pydantic validation failures raise ValidationError, not TypeError, so the except clause never actually catches anything. The real error propagates and crashes the 26B streaming call whenever thinking_budget=0 is rejected. (The same historical fix also quieted an unrelated TTS \"no voice models found\" log that fired on every single request instead of once — bundled here too since it's the same commit, though it's a log-spam fix, not a functional bug.) Analysis only in this demo: the bundled excerpts are real code from the repo, read as text, not executed.",
+      "priority": "Medium",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/app/services/model_client.py",
+      "function": "stream_26b",
+      "line": 513,
+      "github_url": "https://github.com/Ilakiancs/OptiLearn/commit/4bc418bb5cbf3e883a5dd6ecc9dc4552a01772f0"
+    },
+    {
+      "id": "__PLACEHOLDER__",
+      "scenario": "model_tag_match",
+      "title": "Model-tag matching treats different model sizes as interchangeable",
+      "description": "_model_present() in main.py's /health and is_model_present() in model_client.py both match any installed model whose base name (before the \":\") equals the queried one — so checking for \"gemma4:e4b\" (the deep model) reports present if only \"gemma4:e2b\" (the fast model) is actually installed, since both share the base \"gemma4\". The health check / readiness UI can report the deep model as available when only the small one is pulled, letting the app attempt to route to a model that isn't there. (The same historical fix also fixed translate_text_chunk()'s grade_level parsing, which crashed on a non-numeric stored value — bundled here too since it's the same commit.) Analysis only in this demo: the bundled excerpts are real code from the repo, read as text, not executed.",
+      "priority": "Medium",
+      "source": "scan",
+      "category": "correctness",
+      "file": "optilearn/app/main.py",
+      "function": "_model_present",
+      "line": 266,
+      "github_url": "https://github.com/Ilakiancs/OptiLearn/commit/8d3e91d5557a6586946caf6888bf4aef9d236e71"
     }
   ],
   "warnings": [
-    "This is the built-in OptiLearn demo. The issue list is prepared in advance and describes a real OptiLearn bug; reproduce and debug run live in an isolated sandbox."
+    "This is the built-in OptiLearn demo. The issue list is prepared in advance; reproduce and debug run live in an isolated sandbox for the Whisper issue. The other five issues are real historical bugs from OptiLearn's own history, analysed as text (not executed) since no sandbox harness is bundled for them.",
+    "See the real project at https://github.com/Ilakiancs/OptiLearn — every issue here links to the real commit that fixed it."
   ]
 }

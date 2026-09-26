@@ -139,7 +139,13 @@ def build_chunks(root: Path, files: list[Path], limit: int) -> list[Chunk]:
             text = f.read_text("utf-8", errors="replace")
         except OSError:
             continue
-        for seg in split_file(str(f.relative_to(root)), text, limit):
+        # .as_posix(), not str(): on Windows, Path.relative_to() renders with
+        # backslashes, but this string is shown to the model in the ### FILE
+        # header and matched back against its response in _to_issue() (and
+        # stored as Issue.file). A backslash-vs-forward-slash mismatch made
+        # every finding for any nested file (i.e. virtually all real repos)
+        # silently unmatched and dropped — confirmed by a real test failure.
+        for seg in split_file(f.relative_to(root).as_posix(), text, limit):
             if budget <= 0:
                 break
             if len(seg.lines) > budget:
@@ -319,7 +325,7 @@ def _bob_scan_files(root: Path, files: list[Path]) -> dict[str, str]:
             if chosen:
                 continue
             text = text[:_BOB_SCAN_MAX_CHARS]
-        chosen[str(f.relative_to(root))] = text
+        chosen[f.relative_to(root).as_posix()] = text  # see build_chunks re: Windows
         used += len(text)
     return chosen
 
@@ -421,7 +427,7 @@ async def scan_repo(
 ) -> ScanResult:
     """Select files, analyse them with Granite (or Bob if Granite is unavailable)."""
     selected, warnings, total = await asyncio.to_thread(filter_tree_with_total, root)
-    rel_paths = [str(f.relative_to(root)) for f in selected]
+    rel_paths = [f.relative_to(root).as_posix() for f in selected]  # see build_chunks
 
     scan_issues: list[Issue] = []
     if not selected:

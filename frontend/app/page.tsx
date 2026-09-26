@@ -12,7 +12,7 @@ const STEPS = [
   },
   {
     title: "Debug race",
-    body: "Two to six candidate fixes from Bob, Granite and prepared strategies each run in their own sandbox, in parallel.",
+    body: "When a sandbox harness exists, two to six candidate fixes from Bob, Granite and prepared strategies each run in their own sandbox, in parallel.",
   },
   {
     title: "Verify and recommend",
@@ -56,8 +56,8 @@ export default function Home() {
               <EntryLink href="/scan/upload" title="Upload a zip" note="Up to 20 MB" />
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 max-w-md">
-              The demo runs fixes for real. Linked repositories and zips are analysed as text:
-              their results are marked as not executed.
+              The demo includes one sandboxed fix race and five real historical issues analysed as text.
+              Linked repositories and zips are marked as not executed.
             </p>
           </div>
         </div>

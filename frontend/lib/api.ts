@@ -60,6 +60,7 @@ export interface Issue {
   line: number | null;
   github_url: string | null;
   found_by: "granite" | "bob" | null; // scan issues only
+  mode: Mode; // whether THIS issue's Reproduce/Debug run sandboxed or reasoning
 }
 
 export interface ScanResult {
@@ -92,6 +93,8 @@ export interface InvestigatorReport {
   error: string | null;
   cost: number | null;
   recorded: boolean;
+  trigger_conditions: string | null; // demo mode only
+  execution_trace: string[]; // demo mode only
 }
 
 export type ReproStatus = "running" | "reproduced" | "not_reproducible" | "plausible" | "error";
