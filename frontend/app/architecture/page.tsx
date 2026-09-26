@@ -2,22 +2,20 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useReducer, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import {
   ArchitectureComponent,
   ArchitectureRelationship,
   ArchitectureReport,
   EvidenceRef,
-  LogEvent,
   ScanResult,
   getArchitectureDownloadUrl,
-  openArchitectureStream,
-  postArchitecture,
 } from "../../lib/api";
-import { useRunStream } from "../../lib/useRunStream";
+import { useArchitecture } from "../../lib/useArchitecture";
 import AssessingStatus from "../components/AssessingStatus";
 import Badge, { type Tone } from "../components/Badge";
 import LogView from "../components/LogView";
+import MermaidView from "../components/MermaidView";
 
 const SOURCE_BADGE: Record<ArchitectureReport["source"], { label: string; tone: Tone }> = {
   curated: { label: "Curated", tone: "violet" },
@@ -132,41 +130,11 @@ function RelationshipRow({ r, labelFor }: { r: ArchitectureRelationship; labelFo
 
 // ── page ───────────────────────────────────────────────────────────────────────
 
-interface State {
-  report: ArchitectureReport | null;
-  log: LogEvent[];
-  error: string | null;
-}
-
-type Action =
-  | { type: "reset" }
-  | { type: "log"; event: LogEvent }
-  | { type: "done"; report: ArchitectureReport }
-  | { type: "error"; message: string };
-
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case "reset":
-      return { report: null, log: [], error: null };
-    case "log":
-      return { ...state, log: [...state.log, action.event] };
-    case "done":
-      return { ...state, report: action.report, error: null };
-    case "error":
-      return { ...state, error: action.message };
-    default:
-      return state;
-  }
-}
-
 function ArchitectureContent() {
   const params = useSearchParams();
   const scanId = params.get("scan");
 
   const [scan, setScan] = useState<ScanResult | null | undefined>(undefined);
-  const [architectureId, setArchitectureId] = useState<string | null>(null);
-  const [startError, setStartError] = useState<string | null>(null);
-  const [state, dispatch] = useReducer(reducer, { report: null, log: [], error: null });
 
   useEffect(() => {
     if (!scanId) {
@@ -185,36 +153,7 @@ function ArchitectureContent() {
     }
   }, [scanId]);
 
-  useEffect(() => {
-    if (!scanId) return;
-    let cancelled = false;
-    postArchitecture(scanId)
-      .then((report) => {
-        if (cancelled) return;
-        setArchitectureId(report.architecture_id);
-        if (report.status !== "running") {
-          dispatch({ type: "done", report });
-        }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setStartError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [scanId]);
-
-  const openStream = useMemo(
-    () => (architectureId ? () => openArchitectureStream(architectureId) : null),
-    [architectureId]
-  );
-
-  useRunStream<ArchitectureReport>(openStream, {
-    onReset: () => dispatch({ type: "reset" }),
-    onLog: (event) => dispatch({ type: "log", event }),
-    onDone: (report) => dispatch({ type: "done", report }),
-    onError: (message) => dispatch({ type: "error", message }),
-  });
+  const { report, log, error } = useArchitecture(scanId);
 
   if (!scanId || scan === null) {
     return (
@@ -230,11 +169,6 @@ function ArchitectureContent() {
     );
   }
 
-  if (startError) {
-    return <p role="alert" className="text-sm text-red-600 dark:text-red-400">{startError}</p>;
-  }
-
-  const { report, log, error } = state;
   const running = !report || report.status === "running";
 
   return (
@@ -420,9 +354,9 @@ function ReportView({ report }: { report: ArchitectureReport }) {
       {report.mermaid ? (
         <section className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-700 dark:text-gray-300">Diagram (Mermaid source)</h3>
+            <h3 className="font-medium text-gray-700 dark:text-gray-300">Diagram</h3>
             <div className="flex gap-2">
-              <CopyButton text={report.mermaid} />
+              <CopyButton text={report.mermaid} label="Copy source" />
               <a
                 href={getArchitectureDownloadUrl(report.architecture_id, "mermaid")}
                 className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
@@ -437,16 +371,25 @@ function ReportView({ report }: { report: ArchitectureReport }) {
               </a>
             </div>
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Paste this into{" "}
-            <a href="https://mermaid.live" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
-              mermaid.live
-            </a>{" "}
-            or a Markdown renderer with Mermaid support to view it as a diagram. The component list above contains the same information.
-          </p>
-          <pre className="max-h-96 overflow-auto rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words">
-            {report.mermaid}
-          </pre>
+          <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 overflow-x-auto bg-white dark:bg-gray-950">
+            <MermaidView
+              source={report.mermaid}
+              id={`${report.architecture_id}-overview`}
+              fallback={
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  See the component list above for the same information.
+                </p>
+              }
+            />
+          </div>
+          <details>
+            <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
+              View Mermaid source
+            </summary>
+            <pre className="mt-1 max-h-96 overflow-auto rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words">
+              {report.mermaid}
+            </pre>
+          </details>
         </section>
       ) : (
         report.status === "complete" && (
@@ -461,12 +404,20 @@ function ReportView({ report }: { report: ArchitectureReport }) {
           <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">
             Show full detail diagram
           </summary>
-          <div className="flex justify-end pt-2">
-            <CopyButton text={report.detail_mermaid} />
+          <div className="flex justify-end">
+            <CopyButton text={report.detail_mermaid} label="Copy source" />
           </div>
-          <pre className="max-h-96 overflow-auto rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words">
-            {report.detail_mermaid}
-          </pre>
+          <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 overflow-x-auto bg-white dark:bg-gray-950">
+            <MermaidView
+              source={report.detail_mermaid}
+              id={`${report.architecture_id}-detail`}
+              fallback={
+                <pre className="max-h-96 overflow-auto text-xs leading-relaxed font-mono whitespace-pre-wrap break-words">
+                  {report.detail_mermaid}
+                </pre>
+              }
+            />
+          </div>
         </details>
       )}
 

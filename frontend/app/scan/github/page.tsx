@@ -55,11 +55,22 @@ export default function ScanGitHubPage() {
     abortRef.current = new AbortController();
 
     try {
+      const normalizedUrl = normalizeGithubUrl(url);
       const result: ScanResult = await postScan(
-        { source: "github", repo_url: normalizeGithubUrl(url) },
+        { source: "github", repo_url: normalizedUrl },
         abortRef.current.signal
       );
       sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
+      // "owner/repo" for display — the backend contract has no name field,
+      // this is purely a client-side label derived from what was typed.
+      const displayName = normalizedUrl
+        .replace(/^https?:\/\//i, "")
+        .replace(/^www\./i, "")
+        .replace(/^github\.com\//i, "")
+        .replace(/\.git$/i, "")
+        .replace(/\/$/, "")
+        .replace(/\/tree\/.*$/, "");
+      sessionStorage.setItem(`scan:${result.scan_id}:name`, displayName);
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;

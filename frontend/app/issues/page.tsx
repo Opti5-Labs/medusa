@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
-import { ScanResult, Issue } from "../../lib/api";
+import { ArchitectureReport, ScanResult, Issue } from "../../lib/api";
+import { useArchitecture } from "../../lib/useArchitecture";
+import Badge from "../components/Badge";
+import MermaidView from "../components/MermaidView";
 
 const PRIORITY_COLORS: Record<string, string> = {
   High: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
@@ -124,6 +127,93 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
   );
 }
 
+/** Compact, textual stand-in for when the diagram itself fails to render. */
+function ComponentFallbackList({ report }: { report: ArchitectureReport }) {
+  if (report.components.length === 0) return null;
+  return (
+    <ul className="text-sm list-disc list-inside space-y-0.5">
+      {report.components.map((c) => (
+        <li key={c.id}>{c.label}</li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Auto-starts (or reuses) the architecture run for this scan and shows a
+ * rendered diagram once it's ready. Never implies the repository code was
+ * executed — the source/status badges and caption say plainly whether this
+ * is the curated OptiLearn reference or statically inferred.
+ */
+function DerivedArchitecture({ scanId }: { scanId: string }) {
+  const { report, error, running } = useArchitecture(scanId);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold tracking-tight">Derived Architecture</h3>
+        <Link
+          href={`/architecture?scan=${scanId}`}
+          className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+        >
+          View project architecture
+        </Link>
+      </div>
+
+      {error && (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {error}
+        </p>
+      )}
+
+      {running && !error && (
+        <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-6 flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+          <span
+            className="inline-block h-4 w-4 rounded-full border-2 border-verdigris-600 border-t-transparent animate-spin"
+            aria-hidden
+          />
+          Generating the architecture diagram…
+        </div>
+      )}
+
+      {report && report.status !== "running" && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={report.source === "curated" ? "violet" : "blue"}>
+              {report.source === "curated" ? "Curated" : "Statically inferred"}
+            </Badge>
+            {report.status !== "complete" && (
+              <Badge tone="amber">{report.status === "partial" ? "Partial" : "Unavailable"}</Badge>
+            )}
+          </div>
+
+          {report.mermaid ? (
+            <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 overflow-x-auto bg-white dark:bg-gray-950">
+              <MermaidView
+                source={report.mermaid}
+                id={report.architecture_id}
+                fallback={<ComponentFallbackList report={report} />}
+              />
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {report.status === "unavailable"
+                ? "This repository is too large for a diagram. See the full architecture report for details."
+                : "No diagram was generated for this repository."}
+            </p>
+          )}
+
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {report.source === "curated"
+              ? "A curated, hand-authored reference diagram for the OptiLearn demo."
+              : "Inferred from repository files by static analysis. Nothing here was executed."}
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
 function IssuesContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -131,6 +221,7 @@ function IssuesContent() {
 
   const [result, setResult] = useState<ScanResult | null>(null);
   const [expired, setExpired] = useState(false);
+  const [repoName, setRepoName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!scanId) {
@@ -147,6 +238,10 @@ function IssuesContent() {
     } catch {
       setExpired(true);
     }
+    // Set by the scan/github, scan/upload and demo entry points. Absent for
+    // links created before this existed, or hit directly — falls back to
+    // the repo_source label below.
+    setRepoName(sessionStorage.getItem(`scan:${scanId}:name`));
   }, [scanId]);
 
   if (expired) {
@@ -185,17 +280,11 @@ function IssuesContent() {
         Back to home
       </Link>
 
-      {/* Header */}
+      {/* Repository name, at the very top */}
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-2xl font-semibold tracking-tight">Issues</h2>
-          <Link
-            href={`/architecture?scan=${result.scan_id}`}
-            className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
-          >
-            View project architecture
-          </Link>
-        </div>
+        <h2 className="text-2xl font-semibold tracking-tight break-all">
+          {repoName ?? sourceLabel[result.repo_source] ?? result.repo_source}
+        </h2>
         <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
           <div>
             <dt className="text-gray-500 dark:text-gray-400">Source</dt>
@@ -214,7 +303,7 @@ function IssuesContent() {
         </dl>
       </div>
 
-      {/* Warnings */}
+      {/* Notices */}
       {result.warnings.length > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/10 p-4 space-y-1">
           <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">Notices</p>
@@ -227,6 +316,9 @@ function IssuesContent() {
           </ul>
         </div>
       )}
+
+      {/* Derived Architecture */}
+      <DerivedArchitecture scanId={result.scan_id} />
 
       {/* Issue count */}
       <div className="flex items-center justify-between">

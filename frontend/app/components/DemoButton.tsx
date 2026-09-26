@@ -31,6 +31,7 @@ export default function DemoButton() {
     try {
       const result: ScanResult = await postScan({ source: "demo" });
       sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
+      sessionStorage.setItem(`scan:${result.scan_id}:name`, "OptiLearn Demo");
       const remaining = MIN_VISIBLE_MS - (Date.now() - started);
       if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
       router.push(`/issues?scan=${result.scan_id}`);
