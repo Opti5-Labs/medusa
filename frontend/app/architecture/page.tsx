@@ -202,7 +202,7 @@ function ArchitectureContent() {
         )}
         <p className="text-xs text-gray-500 dark:text-gray-400">
           {report?.source === "curated"
-            ? "A curated, hand-authored reference diagram for the OptiLearn demo — see golden/optilearn for provenance."
+            ? "A curated, hand-authored reference diagram for the OptiLearn demo. Its sources are optilearn-architecture.md in the repository root and backend/app/architecture/curated/optilearn/README.md."
             : "Inferred from repository files by static analysis. Nothing here was executed."}
         </p>
       </div>

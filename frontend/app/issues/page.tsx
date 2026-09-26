@@ -151,7 +151,7 @@ function DerivedArchitecture({ scanId }: { scanId: string }) {
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-lg font-semibold tracking-tight">Derived Architecture</h3>
+        <h3 className="text-lg font-semibold tracking-tight">Project architecture</h3>
         <Link
           href={`/architecture?scan=${scanId}`}
           className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
@@ -317,7 +317,7 @@ function IssuesContent() {
         </div>
       )}
 
-      {/* Derived Architecture */}
+      {/* Project architecture */}
       <DerivedArchitecture scanId={result.scan_id} />
 
       {/* Issue count */}

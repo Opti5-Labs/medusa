@@ -1,5 +1,7 @@
 """Tests for app/architecture/extract_python.py — stdlib `ast` extraction only."""
 
+import pytest
+
 from app.architecture.extract_python import extract
 
 
@@ -88,3 +90,23 @@ def test_never_raises_on_arbitrary_garbage_bytes_decoded_as_text():
     garbage = bytes(range(256)).decode("utf-8", errors="replace")
     facts = extract(garbage, "garbage.py")
     assert facts.parse_ok in (True, False)  # must not raise either way
+
+
+# ── Inputs that overflow CPython's parser stack (well under ARCH_MAX_FILE_BYTES) ──
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "x = " + "-" * 390_000 + "1\n",
+        "x = " + "not " * 95_000 + "1\n",
+        "x = a" + ".b" * 190_000 + "\n",
+        "x = a" + "[0]" * 120_000 + "\n",
+        "x = " + "lambda: " * 45_000 + "1\n",
+    ],
+    ids=["unary-minus", "not-chain", "attribute-chain", "subscripts", "nested-lambdas"],
+)
+def test_parser_stack_overflow_is_a_parse_failure_not_an_exception(source):
+    facts = extract(source, "generated.py")  # must not raise
+    assert facts.parse_ok is False
+    assert facts.error

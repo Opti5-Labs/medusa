@@ -177,18 +177,17 @@ async def _run(run: ArchitectureRun, record: ScanRecord) -> None:
     )
     to_parse = parseable[:budget]
 
-    file_facts: dict[str, FileFacts] = {}
-    parse_failures = 0
-    for f in to_parse:
-        text = _read_text(f.abs_path)
-        if text is None:
-            parse_failures += 1
-            continue
-        facts = extract_python(text, f.rel_path)
-        if not facts.parse_ok:
-            parse_failures += 1
-            continue
-        file_facts[f.rel_path] = facts
+    # Parsing is CPU-bound (up to ARCH_MAX_PARSED_FILES files of up to
+    # ARCH_MAX_FILE_BYTES each): run it off the event loop so other requests and
+    # live streams keep flowing, and stop at the run's time budget.
+    file_facts, parse_failures, parse_stopped = await asyncio.to_thread(
+        _parse_files, to_parse, time.monotonic() + config.ARCH_TIMEOUT_S
+    )
+    if parse_stopped:
+        report.limitations.append(
+            f"Parsing stopped at the {config.ARCH_TIMEOUT_S}s time budget; "
+            "files after that point were not analysed."
+        )
 
     await ch.emit(
         "parse",
@@ -317,6 +316,31 @@ async def _run_curated(run: ArchitectureRun, record: ScanRecord) -> None:
 
 
 # ── Report assembly helpers ───────────────────────────────────────────────────
+
+
+def _parse_files(
+    files: list[inventorymod.FileRecord], deadline: float
+) -> tuple[dict[str, FileFacts], int, bool]:
+    """
+    Read and parse *files* (runs in a worker thread). Returns (facts by path,
+    number of files that could not be read or parsed, whether the deadline
+    stopped it early). Never raises for a bad file: extract() reports it.
+    """
+    file_facts: dict[str, FileFacts] = {}
+    failures = 0
+    for f in files:
+        if time.monotonic() > deadline:
+            return file_facts, failures, True
+        text = _read_text(f.abs_path)
+        if text is None:
+            failures += 1
+            continue
+        facts = extract_python(text, f.rel_path)
+        if not facts.parse_ok:
+            failures += 1
+            continue
+        file_facts[f.rel_path] = facts
+    return file_facts, failures, False
 
 
 def _read_text(path: Path) -> str | None:

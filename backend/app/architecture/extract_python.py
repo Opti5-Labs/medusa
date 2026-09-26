@@ -117,6 +117,14 @@ def extract(text: str, rel_path: str) -> FileFacts:
         facts.parse_ok = False
         facts.error = f"{type(exc).__name__}: {exc}"
         return facts
+    except (RecursionError, MemoryError) as exc:
+        # CPython's parser raises these (not SyntaxError) when an expression is
+        # nested too deeply for its stack, e.g. very long `a.b.c...`, `x[0][0]...`,
+        # `- - - ... 1` or `not not ... x` chains, well under ARCH_MAX_FILE_BYTES.
+        # One such file must not sink the whole architecture run.
+        facts.parse_ok = False
+        facts.error = f"{type(exc).__name__}: nested too deeply to parse"
+        return facts
 
     filename = rel_path.rsplit("/", 1)[-1]
     facts.is_config_module = filename in _CONFIG_MODULE_NAMES

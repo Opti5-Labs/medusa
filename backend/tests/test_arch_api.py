@@ -291,3 +291,62 @@ async def test_huge_repo_returns_unavailable_not_a_bare_too_large_message(
     assert done["coverage"]["limit_exceeded"] == "ARCH_MAX_DISCOVERED_FILES"
     assert len(done["narrowing_suggestions"]) >= 2
     assert len(done["warnings"][0]) > len("Repository too large.")
+
+
+# ── Robustness: hostile files and the event loop ──────────────────────────────
+
+
+async def test_one_unparseable_file_does_not_sink_the_run(client):
+    repo = dict(_FASTAPI_REPO)
+    # Overflows CPython's parser stack (RecursionError), far below ARCH_MAX_FILE_BYTES.
+    repo["app/generated.py"] = "x = a" + ".b" * 190_000 + "\n"
+    r = await client.post(
+        "/api/scan/upload",
+        files={"file": ("repo.zip", _make_zip(repo), "application/zip")},
+    )
+    scan_id = r.json()["scan_id"]
+    arch_id = (await client.post(f"/api/scans/{scan_id}/architecture")).json()[
+        "architecture_id"
+    ]
+    logs, done = await _events(client, f"/api/architecture/{arch_id}/events")
+    assert done["status"] in ("complete", "partial")
+    assert len(done["components"]) >= 2
+    assert not any(lg["level"] == "error" for lg in logs)
+
+
+async def test_parsing_does_not_block_the_event_loop(client, monkeypatch):
+    import asyncio
+    import time
+
+    from app.pipelines import architecture as pipeline
+
+    real_extract = pipeline.extract_python
+
+    def slow_extract(text, rel_path):
+        time.sleep(0.1)  # stands in for a CPU-heavy parse
+        return real_extract(text, rel_path)
+
+    monkeypatch.setattr(pipeline, "extract_python", slow_extract)
+    r = await client.post(
+        "/api/scan/upload",
+        files={"file": ("repo.zip", _make_zip(_FASTAPI_REPO), "application/zip")},
+    )
+    scan_id = r.json()["scan_id"]
+
+    ticks = 0
+
+    async def heartbeat():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    beat = asyncio.create_task(heartbeat())
+    arch_id = (await client.post(f"/api/scans/{scan_id}/architecture")).json()[
+        "architecture_id"
+    ]
+    _, done = await _events(client, f"/api/architecture/{arch_id}/events")
+    beat.cancel()
+    assert done["status"] == "complete"
+    # 7 files x 0.1 s of parsing; a blocked loop would leave the heartbeat near 0.
+    assert ticks >= 15, f"event loop was blocked during parsing (ticks={ticks})"
