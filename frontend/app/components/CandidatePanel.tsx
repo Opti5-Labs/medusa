@@ -140,7 +140,6 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
           )}
         </div>
       )}
-      )}
     </article>
   );
 }
