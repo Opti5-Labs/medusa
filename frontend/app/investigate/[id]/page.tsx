@@ -13,6 +13,7 @@ import {
   type ReproAttempt,
   type ScanResult,
   getDebugDownloadUrl,
+  getDebugPatchUrl,
   openDebugStream,
   openReproStream,
   postDebug,
@@ -362,6 +363,11 @@ function Investigate() {
                 downloadUrl={
                   session.mode === "sandboxed" && c.sandbox_status === "passed"
                     ? getDebugDownloadUrl(session.session_id, c.candidate_id)
+                    : null
+                }
+                patchUrl={
+                  c.patch && (session.mode === "reasoning" || c.sandbox_status === "passed")
+                    ? getDebugPatchUrl(session.session_id, c.candidate_id)
                     : null
                 }
                 canHide={visible.length > 2}

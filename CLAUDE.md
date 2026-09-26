@@ -217,6 +217,7 @@ Status rules:
 | POST   | `/api/issues/{issue_id}/debug`                   | `{"candidates": 2..6}`                             | `DebugSession`                                                                                         |
 | GET    | `/api/debug/{session_id}/events`                 |                                                    | SSE stream of `LogEvent` (source `candidate:<id>`), then `done` with `DebugSession` + `Recommendation` |
 | GET    | `/api/debug/{session_id}/download?candidate_id=` |                                                    | `application/zip` with the fix applied                                                                 |
+| GET    | `/api/debug/{session_id}/patch?candidate_id=`    |                                                    | `text/x-diff` git-applyable patch; verified candidates only on the demo, labelled untested for general repos |
 
 "Reproduce and Debug" is the frontend calling repro, waiting for `done`, then calling debug.
 General repos default to 2 debug candidates; OptiLearn allows 2–6.
