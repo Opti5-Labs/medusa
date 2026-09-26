@@ -464,7 +464,7 @@ def _create_deps_volume(client, env: ExecEnv) -> None:
         config.EXEC_IMAGE,
         entrypoint=["sleep", "infinity"],
         command=[],
-        name=f"medusa-hold-{env.volume}",
+        name=_holder_name(env),
         detach=True,
         runtime=config.EXEC_RUNTIME,
         network_disabled=True,
@@ -472,8 +472,8 @@ def _create_deps_volume(client, env: ExecEnv) -> None:
         cap_drop=["ALL"],
         security_opt=["no-new-privileges"],
         user="10001:10001",
-        mem_limit="64m",
-        pids_limit=8,
+        mem_limit="128m",
+        pids_limit=128,  # gVisor's own sandbox processes count against this
         environment={},
         log_config=_log_config(),
         volumes={env.volume: {"bind": "/deps", "mode": "ro"}},
@@ -481,11 +481,23 @@ def _create_deps_volume(client, env: ExecEnv) -> None:
     env.holder = holder.id
 
 
+def _holder_name(env: ExecEnv) -> str:
+    return f"medusa-hold-{env.volume}"
+
+
 def _remove_env(env: ExecEnv) -> None:
+    import docker
+
     client = _client()
-    if env.holder:
-        client.containers.get(env.holder).remove(force=True)
-    client.volumes.get(env.volume).remove(force=True)
+    # By name: a holder that failed to start still exists and pins the volume.
+    try:
+        client.containers.get(_holder_name(env)).remove(force=True)
+    except docker.errors.NotFound:
+        pass
+    try:
+        client.volumes.get(env.volume).remove(force=True)
+    except docker.errors.NotFound:
+        pass
 
 
 async def release(env: ExecEnv) -> None:
