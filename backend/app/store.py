@@ -1,50 +1,98 @@
 """
 In-memory run store with TTL sweeper and temp-dir lifecycle.
 
-RunStore maps scan_id -> RunRecord.
-A background asyncio task sweeps expired records every minute and
-deletes their temp directories.
+Holds three kinds of record, all deleted after RUN_TTL_SECONDS:
+    scans        scan_id    -> ScanRecord  (result, extracted tree, issue index)
+    repro runs   attempt_id -> ReproRun
+    debug runs   session_id -> DebugRun
 
 Usage:
     store = RunStore()
     # register in FastAPI lifespan (see main.py)
 
-    record = store.create(scan_id, tmp_dir, result)
-    record = store.get(scan_id)          # None if missing / expired
-    store.delete(scan_id)               # also removes the whole tmp_dir
+    record = await store.create(scan_id, tmp_dir, result, root=..., scenarios=...)
+    found = await store.find_issue(issue_id)   # (ScanRecord, Issue) | None
 """
 
 import asyncio
 import logging
 import shutil
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from app.config import RUN_TTL_SECONDS
-from app.models.contracts import ScanResult
+from app.models.contracts import (
+    DebugSession,
+    Issue,
+    Recommendation,
+    ReproAttempt,
+    ScanResult,
+)
+from app.streaming import EventChannel
 
 log = logging.getLogger(__name__)
 
-# Hard cap on in-flight scan records to prevent disk exhaustion.
+# Hard cap on scans that own temp files, to prevent disk exhaustion.
 # Exceeding this returns a 503 rather than filling the disk.
 _MAX_STORED_SCANS = 200
+# Demo scans own no files; the oldest are evicted past this count instead.
+_MAX_DEMO_SCANS = 1000
+# Cap on live repro/debug runs across all users.
+_MAX_RUNS = 200
+
+
+class StoreFullError(RuntimeError):
+    """The store is at capacity. The message is safe to show users."""
 
 
 @dataclass
-class RunRecord:
+class ScanRecord:
     scan_id: str
     tmp_dir: Path | None  # the whole temp dir; None for demo (bundled)
     result: ScanResult
+    root: Path | None = None  # extracted repo root, read as text only
+    scenarios: dict[str, str] = field(default_factory=dict)  # issue_id -> demo scenario
     created_at: float = field(default_factory=time.monotonic)
 
     def is_expired(self) -> bool:
         return (time.monotonic() - self.created_at) > RUN_TTL_SECONDS
 
 
+# Kept for callers/tests that use the old name.
+RunRecord = ScanRecord
+
+
+@dataclass
+class ReproRun:
+    attempt: ReproAttempt
+    channel: EventChannel
+    baseline: Any = None  # SandboxResult on the original code (sandboxed mode)
+    task: asyncio.Task | None = None
+    created_at: float = field(default_factory=time.monotonic)
+
+
+@dataclass
+class DebugRun:
+    session: DebugSession
+    channel: EventChannel
+    workdirs: dict[str, Path] = field(
+        default_factory=dict
+    )  # candidate_id -> patched tree
+    tmp_dir: Path | None = None
+    recommendation: Recommendation | None = None
+    task: asyncio.Task | None = None
+    created_at: float = field(default_factory=time.monotonic)
+
+
 class RunStore:
     def __init__(self) -> None:
-        self._records: dict[str, RunRecord] = {}
+        self._records: OrderedDict[str, ScanRecord] = OrderedDict()
+        self._issue_index: dict[str, str] = {}  # issue_id -> scan_id
+        self.repro_runs: dict[str, ReproRun] = {}
+        self.debug_runs: dict[str, DebugRun] = {}
         self._lock = asyncio.Lock()
         self._sweeper_task: asyncio.Task | None = None
 
@@ -55,39 +103,63 @@ class RunStore:
         self._sweeper_task = asyncio.create_task(self._sweep_loop())
 
     async def stop(self) -> None:
-        """Cancel the sweeper and wait for it to finish. Call from FastAPI lifespan."""
+        """Cancel the sweeper and running pipelines. Call from FastAPI lifespan."""
         if self._sweeper_task:
             self._sweeper_task.cancel()
             try:
                 await self._sweeper_task
             except asyncio.CancelledError:
                 pass
+        for run in [*self.repro_runs.values(), *self.debug_runs.values()]:
+            if run.task and not run.task.done():
+                run.task.cancel()
 
-    # ── CRUD ───────────────────────────────────────────────────────────────────
+    # ── Scans ──────────────────────────────────────────────────────────────────
 
     async def create(
-        self, scan_id: str, tmp_dir: Path | None, result: ScanResult
-    ) -> RunRecord:
+        self,
+        scan_id: str,
+        tmp_dir: Path | None,
+        result: ScanResult,
+        *,
+        root: Path | None = None,
+        scenarios: dict[str, str] | None = None,
+    ) -> ScanRecord:
         """
-        Register a completed scan.  *tmp_dir* is the entire temp directory
-        (returned by ingest_zip / ingest_github); it will be deleted on expiry
-        or explicit delete().  Pass None for the demo scan (no temp files).
+        Register a completed scan. *tmp_dir* is the entire temp directory
+        (returned by ingest_zip / ingest_github); it is deleted on expiry
+        or explicit delete(). Pass None for the demo scan (no temp files).
 
-        Raises RuntimeError with status hint 503 if the store is full.
+        Raises StoreFullError if too many file-backed scans are stored.
         """
+        evicted: list[str] = []
         async with self._lock:
-            if len(self._records) >= _MAX_STORED_SCANS:
-                # Clean up the caller's temp dir so it doesn't leak
-                if tmp_dir and tmp_dir.exists():
-                    _remove_dir(tmp_dir)
-                raise RuntimeError(
-                    "Server is busy with too many active scans. Please try again shortly."
-                )
-            record = RunRecord(scan_id=scan_id, tmp_dir=tmp_dir, result=result)
+            if tmp_dir is not None:
+                owned = sum(1 for r in self._records.values() if r.tmp_dir is not None)
+                if owned >= _MAX_STORED_SCANS:
+                    if tmp_dir.exists():
+                        _remove_dir(tmp_dir)
+                    raise StoreFullError(
+                        "Server is busy with too many active scans. Please try again shortly."
+                    )
+            else:
+                demos = [sid for sid, r in self._records.items() if r.tmp_dir is None]
+                evicted = demos[: max(0, len(demos) - _MAX_DEMO_SCANS + 1)]
+            record = ScanRecord(
+                scan_id=scan_id,
+                tmp_dir=tmp_dir,
+                result=result,
+                root=root,
+                scenarios=dict(scenarios or {}),
+            )
             self._records[scan_id] = record
+            for issue in result.issues:
+                self._issue_index[issue.id] = scan_id
+        for sid in evicted:
+            await self.delete(sid)
         return record
 
-    async def get(self, scan_id: str) -> RunRecord | None:
+    async def get(self, scan_id: str) -> ScanRecord | None:
         async with self._lock:
             record = self._records.get(scan_id)
         if record is None or record.is_expired():
@@ -96,11 +168,53 @@ class RunStore:
             return None
         return record
 
+    async def find_issue(self, issue_id: str) -> tuple[ScanRecord, Issue] | None:
+        async with self._lock:
+            scan_id = self._issue_index.get(issue_id)
+        if scan_id is None:
+            return None
+        record = await self.get(scan_id)
+        if record is None:
+            return None
+        for issue in record.result.issues:
+            if issue.id == issue_id:
+                return record, issue
+        return None
+
     async def delete(self, scan_id: str) -> None:
         async with self._lock:
             record = self._records.pop(scan_id, None)
+            if record:
+                for issue in record.result.issues:
+                    self._issue_index.pop(issue.id, None)
         if record and record.tmp_dir and record.tmp_dir.exists():
             _remove_dir(record.tmp_dir)
+
+    # ── Runs ───────────────────────────────────────────────────────────────────
+
+    def _check_run_capacity(self) -> None:
+        if len(self.repro_runs) + len(self.debug_runs) >= _MAX_RUNS:
+            raise StoreFullError(
+                "Server is busy with too many active runs. Please try again shortly."
+            )
+
+    def add_repro(self, run: ReproRun) -> None:
+        self._check_run_capacity()
+        self.repro_runs[run.attempt.attempt_id] = run
+
+    def add_debug(self, run: DebugRun) -> None:
+        self._check_run_capacity()
+        self.debug_runs[run.session.session_id] = run
+
+    def latest_repro_for(self, issue_id: str) -> ReproRun | None:
+        runs = [r for r in self.repro_runs.values() if r.attempt.issue_id == issue_id]
+        return max(runs, key=lambda r: r.created_at) if runs else None
+
+    def _drop_run(self, run: ReproRun | DebugRun) -> None:
+        if run.task and not run.task.done():
+            run.task.cancel()
+        if isinstance(run, DebugRun) and run.tmp_dir and run.tmp_dir.exists():
+            _remove_dir(run.tmp_dir)
 
     # ── Sweeper ────────────────────────────────────────────────────────────────
 
@@ -118,6 +232,11 @@ class RunStore:
         for sid in expired:
             log.info("store: TTL expired, deleting scan_id=%s", sid)
             await self.delete(sid)
+
+        cutoff = time.monotonic() - RUN_TTL_SECONDS
+        for runs in (self.repro_runs, self.debug_runs):
+            for run_id in [k for k, r in runs.items() if r.created_at < cutoff]:
+                self._drop_run(runs.pop(run_id))
 
 
 def _remove_dir(path: Path) -> None:

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, Suspense } from "react";
 import { ScanResult, Issue } from "../../lib/api";
@@ -15,7 +16,7 @@ const SOURCE_LABELS: Record<string, string> = {
   github_issue: "GitHub Issue",
 };
 
-function IssueRow({ issue }: { issue: Issue }) {
+function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
   return (
     <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -42,7 +43,7 @@ function IssueRow({ issue }: { issue: Issue }) {
       <div className="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-500">
         {issue.file && (
           <span>
-            📄 <code className="font-mono">{issue.file}</code>
+            📄 <code className="font-mono">{issue.file}{issue.line ? `:${issue.line}` : ""}</code>
             {issue.function && (
               <> · <code className="font-mono">{issue.function}()</code></>
             )}
@@ -60,21 +61,24 @@ function IssueRow({ issue }: { issue: Issue }) {
         )}
       </div>
 
-      <div className="flex gap-2 pt-1">
-        <button
-          disabled
-          className="text-xs px-3 py-1 rounded border border-gray-300 dark:border-gray-700 text-gray-400 dark:text-gray-600 cursor-not-allowed"
-          title="Reproduce — coming soon"
-        >
-          Reproduce
-        </button>
-        <button
-          disabled
-          className="text-xs px-3 py-1 rounded border border-gray-300 dark:border-gray-700 text-gray-400 dark:text-gray-600 cursor-not-allowed"
-          title="Debug — coming soon"
-        >
-          Debug
-        </button>
+      <div className="flex flex-wrap gap-2 pt-1">
+        {[
+          ["repro", "Reproduce"],
+          ["debug", "Debug"],
+          ["both", "Reproduce and Debug"],
+        ].map(([action, label]) => (
+          <Link
+            key={action}
+            href={`/investigate/${issue.id}?scan=${scanId}&action=${action}`}
+            className={`text-xs px-3 py-1 rounded border transition-colors ${
+              action === "both"
+                ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900 hover:opacity-90"
+                : "border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
+            }`}
+          >
+            {label}
+          </Link>
+        ))}
       </div>
     </div>
   );
@@ -145,7 +149,7 @@ function IssuesContent() {
           {" · "}Language: <span className="font-medium">{result.language}</span>
           {" · "}
           <span className="font-medium">{result.files_scanned.length}</span> of{" "}
-          <span className="font-medium">{result.files_total}</span> files selected
+          <span className="font-medium">{result.files_total}</span> files analysed
         </p>
       </div>
 
@@ -186,7 +190,7 @@ function IssuesContent() {
       ) : (
         <div className="space-y-4">
           {result.issues.map((issue) => (
-            <IssueRow key={issue.id} issue={issue} />
+            <IssueRow key={issue.id} issue={issue} scanId={result.scan_id} />
           ))}
         </div>
       )}

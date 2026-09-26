@@ -18,11 +18,13 @@ async def client():
         base_url="http://test",
     ) as c:
         # Manually trigger lifespan so the store is initialised
+        from app.api import runs as runs_module
         from app.api import scan as scan_module
         from app.store import RunStore
 
         store = RunStore()
         scan_module.set_store(store)
+        runs_module.set_store(store)
         store.start()
         yield c
         await store.stop()
@@ -124,9 +126,9 @@ async def test_rate_limit_upload_enforced(client, monkeypatch, tmp_path):
         assert resp.status_code != 429 or i >= 5
 
     assert rate_limited_at is not None, "Expected a 429 within 6 calls"
-    assert (
-        rate_limited_at == 5
-    ), f"Rate limit should trigger on call 6 (index 5), got index {rate_limited_at}"
+    assert rate_limited_at == 5, (
+        f"Rate limit should trigger on call 6 (index 5), got index {rate_limited_at}"
+    )
 
 
 # ── ScanResult contract ───────────────────────────────────────────────────────

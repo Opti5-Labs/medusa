@@ -9,7 +9,7 @@ Full plan, timeline and team split: see `PROJECT.md`.
 It scans a codebase for issues, reproduces them, and proposes and tests fixes.
 
 - Submission deadline: **Sun 27 Sep 2026, 15:00 UTC (20:30 Colombo)**
-- Stack: Next.js 14 (App Router) + TypeScript frontend, FastAPI (Python 3.11+) backend, Docker sandbox, Granite on watsonx.ai, IBM Bob, hosted on a single AWS EC2 instance.
+- Stack: Next.js 16 (App Router, React 19, Tailwind 4) + TypeScript frontend, FastAPI (Python 3.12+) backend, Docker sandbox, Granite on watsonx.ai, IBM Bob, hosted on a single AWS EC2 instance.
 
 Two paths through the product:
 
@@ -33,12 +33,13 @@ Two paths through the product:
 ## Architecture
 
 ```
-React (Vite)  ──REST + SSE──>  FastAPI
+Next.js       ──REST + SSE──>  FastAPI
                                 ├─ ingest/         GitHub tarball download or zip extract, with limits
                                 ├─ pipelines/scan    → Granite (watsonx.ai) + GitHub Issues API
                                 ├─ pipelines/repro   → sandboxed (OptiLearn) | reasoning (Granite)
                                 ├─ pipelines/debug   → parallel sandboxed candidates (OptiLearn) | reasoning (Granite)
-                                ├─ agents/bob.py     → replays golden/optilearn run (BOB_MODE=replay)
+                                ├─ pipelines/verify  → deterministic pass/fail + ranking (no LLM)
+                                ├─ agents/bob.py     → replays golden/optilearn run (BOB_MODE=replay) when present
                                 └─ sandbox/runner.py → Docker SDK, one container per attempt
 ```
 
@@ -60,21 +61,24 @@ Nothing persists between sessions. Run state lives in an in-memory store plus a 
 │   │   ├── store.py               # in-memory run store with TTL cleanup
 │   │   ├── errors.py              # MedusaError + global handler
 │   │   ├── ratelimit.py           # per-IP sliding-window rate limiter
-│   │   ├── api/                   # scan.py, health.py (repro/debug are stubs in main.py)
+│   │   ├── api/                   # scan.py, runs.py (repro/debug/SSE/download), health.py
 │   │   ├── models/contracts.py    # Pydantic data contracts (source of truth)
 │   │   ├── ingest/                # github.py, zip_upload.py, safe_extract.py, limits.py
-│   │   ├── pipelines/scan.py      # file selection + language detection (Granite pending)
-│   │   ├── demo/                  # pre-baked OptiLearn result loader
+│   │   ├── pipelines/             # scan.py, repro.py, debug.py, verify.py, context.py
+│   │   ├── agents/                # granite.py, investigators.py, fixers.py, bob.py
+│   │   ├── sandbox/runner.py      # the only execution entry point
+│   │   ├── demo/                  # OptiLearn scenario (optilearn.py) + demo scan fixture
 │   │   └── github/issues.py       # read-only GitHub Issues fetch
 │   ├── tests/
 │   └── requirements.txt
 ├── sandbox/
-│   └── optilearn/Dockerfile       # OptiLearn + its deps baked in at build time (not built yet)
+│   └── optilearn/                 # Dockerfile, src/ (OptiLearn subset), harness/ (reproducer), prepared/ (fallback fixes)
 ├── frontend/
-│   ├── app/                       # Next.js 14 App Router
+│   ├── app/                       # Next.js 16 App Router
 │   │   ├── page.tsx               # Landing (Home)
 │   │   ├── layout.tsx
-│   │   ├── issues/page.tsx        # Issue list (shows "files selected" until Granite runs)
+│   │   ├── issues/page.tsx        # Issue list with Reproduce / Debug actions
+│   │   ├── investigate/[id]/page.tsx  # Reproduce panel + debug race
 │   │   ├── scan/github/page.tsx   # GitHub link form
 │   │   ├── scan/upload/page.tsx   # Zip upload form (limit read from NEXT_PUBLIC_MAX_ZIP_MB)
 │   │   └── components/            # shared UI components
@@ -82,7 +86,9 @@ Nothing persists between sessions. Run state lives in an in-memory store plus a 
 │   └── package.json
 └── deploy/
     ├── nginx.conf
-    └── Medusa.service           # systemd unit for the backend
+    ├── medusa-backend.service   # systemd unit for FastAPI
+    ├── medusa-frontend.service  # systemd unit for next start
+    └── setup.sh                 # idempotent Ubuntu bootstrap
 ```
 
 ## Commands
@@ -98,13 +104,13 @@ pytest
 ruff check . && ruff format .
 
 # Sandbox image (needed for the OptiLearn path)
-docker build -t Medusa-optilearn:latest sandbox/optilearn
+docker build -t medusa-optilearn:latest sandbox/optilearn
 
 # Frontend
 cd frontend
 npm install
 npm run dev                          # Next.js dev server (port 3000)
-npm run build                        # outputs frontend/.next for nginx (next start) or static export
+npm run build                        # outputs frontend/.next, served by `next start` behind nginx
 ```
 
 ## Environment variables
@@ -112,20 +118,21 @@ npm run build                        # outputs frontend/.next for nginx (next st
 Copy `.env.example` to `.env`. Never commit `.env`.
 
 ```
-WATSONX_API_KEY=
-WATSONX_PROJECT_ID=
-WATSONX_URL=https://us-south.ml.cloud.ibm.com   # Dallas region
-GRANITE_MODEL_ID=                                # confirm the id in Prompt Lab
+IBM_WATSONX_API_KEY=                             # WATSONX_* names also accepted
+IBM_WATSONX_PROJECT_ID=
+IBM_WATSONX_URL=https://eu-de.ml.cloud.ibm.com   # our project is in Frankfurt
+IBM_WATSONX_MODEL=ibm/granite-4-h-small          # GRANITE_MODEL_ID also accepted
 GITHUB_TOKEN=                                    # optional; fine-grained, no scopes, raises rate limit
 BOB_MODE=replay                                  # replay (default, deployed) | live (local only)
-SANDBOX_IMAGE=Medusa-optilearn:latest
+SANDBOX_IMAGE=medusa-optilearn:latest
 MAX_CONCURRENT_SANDBOXES=6
-ALLOWED_ORIGIN=http://localhost:5173
+ALLOWED_ORIGIN=http://localhost:3000
+TRUST_FORWARDED_FOR=false                        # true only behind deploy/nginx.conf
 ```
 
 ## Data contracts
 
-Source of truth: `backend/app/models/contracts.py`. Mirror in `frontend/src/api/types.ts`.
+Source of truth: `backend/app/models/contracts.py`. Mirror in `frontend/lib/api.ts`. The block below is a summary; the file has the full set (TestResults, PatchStats, DebugDone, origin/investigator labels).
 
 ```python
 from typing import Literal
@@ -218,7 +225,7 @@ All live in `app/config.py`. Change them there, nowhere else.
 - **Zip upload:** 20 MB max, 2,000 files max after extraction. Reject symlinks, absolute paths and any path that resolves outside the extract dir (zip slip).
 - **GitHub repo:** public only. Check `size` from `GET /repos/{owner}/{repo}` before downloading (reject over 50 MB). Download via the tarball endpoint; no `git` on the server.
 - **Scan cap:** 40 files and 6,000 lines total. Skip `node_modules`, `dist`, `build`, `.git`, `venv`, vendored code, lockfiles, binaries and minified files. Report what was skipped in `warnings`.
-- **Rate limits** (per IP): 5 scans per 10 min, 3 repro-or-debug runs per 10 min.
+- **Rate limits** (per IP): 5 scans per 10 min, 6 repro-or-debug runs per 10 min (3 full Reproduce-and-Debug flows).
 - **Timeouts:** scan 90 s total, sandbox run 90 s wall clock, Granite call 30 s with one retry.
 - Oversize or rate-limited requests return a plain, specific message the UI shows as-is (e.g. suggest a smaller repo or a subdirectory).
 
@@ -238,14 +245,16 @@ A candidate whose patch won't apply or whose run fails shows `failed` in its own
 
 ## Bob
 
-- `BOB_MODE=replay` (default, and the only mode on the deployed server): `agents/bob.py` streams `golden/optilearn/*.jsonl` as `LogEvent`s with realistic pacing. The UI badges these as "Recorded Bob session".
+- `BOB_MODE=replay` (default, and the only mode on the deployed server): `agents/bob.py` streams `golden/optilearn/investigation.jsonl` (format in `golden/optilearn/README.md`) as `LogEvent`s with realistic pacing. The UI badges these as "Recorded Bob session". Until that file exists, the demo investigators run live on Granite and are labelled as such.
 - `BOB_MODE=live` (local dev only): calls Bob Shell non-interactively. Burns Bobcoins. Check the Bob Shell docs for the exact invocation; don't guess flags.
 - Golden run files are reviewed for secrets and personal paths before commit.
 
 ## Granite
 
-- All calls go through `agents/granite.py` using the `ibm-watsonx-ai` SDK.
+- All calls go through `agents/granite.py`, which calls the watsonx.ai REST API (IAM token + `/ml/v1/text/chat`) with httpx.
 - Prompts ask for JSON only. Validate with Pydantic. On invalid JSON, retry once, then skip that chunk with a `warn` event. A bad chunk never crashes a scan.
+- Response schemas subclass `LenientModel` (absorbs list-vs-string drift). 429s back off and retry; `token_quota_reached` and auth failures are not retried and are shown as-is.
+- Identical prompts are served from a 6-hour cache in `granite.py`. Keep prompts small: send the relevant excerpt, not whole files. The watsonx.ai project has a token quota; one full demo flow used to cost ~80k tokens.
 - Chunk by file (split files over 400 lines by top-level definitions). Run chunks concurrently, max 5 in flight.
 
 ## Conventions
@@ -260,8 +269,8 @@ A candidate whose patch won't apply or whose run fails shows `failed` in its own
 ## Deploy (AWS)
 
 - One EC2 instance (Ubuntu, 4 vCPU / 16 GB, e.g. `t3.xlarge`) with Docker installed and the sandbox image pre-built.
-- Backend runs under systemd (`deploy/Medusa.service`) as a dedicated user. Secrets live in `/etc/Medusa/env`, never in the repo or AMI.
-- nginx serves `frontend/dist` and proxies `/api` to `127.0.0.1:8000`. SSE locations need `proxy_buffering off;` and a long `proxy_read_timeout`.
+- Backend and frontend run under systemd as the dedicated `medusa` user. Secrets live in `/etc/Medusa/env`, never in the repo or AMI.
+- nginx proxies `/` to `next start` on `127.0.0.1:3000` and `/api` to `127.0.0.1:8000`. SSE locations need `proxy_buffering off;` and a long `proxy_read_timeout`. Everything is in `deploy/` (`setup.sh`, `nginx.conf`, `medusa-backend.service`, `medusa-frontend.service`, `README.md`). The backend must run a single worker: run state is in memory.
 - Security group: 80/443 open, 22 restricted to team IPs. Nothing else runs on this box.
 
 ## Ownership

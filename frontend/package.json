@@ -1,25 +1,24 @@
 {
   "name": "medusa-frontend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "^16.3.6",
-    "react": "^18",
-    "react-dom": "^18"
+    "next": "16.3.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "autoprefixer": "^10.4.19",
-    "postcss": "^8.4.39",
-    "tailwindcss": "^3.4.6",
-    "typescript": "^5"
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "^24",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3"
   }
 }

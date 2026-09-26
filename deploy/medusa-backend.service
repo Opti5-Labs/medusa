@@ -1,0 +1,27 @@
+[Unit]
+Description=Medusa backend (FastAPI)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=medusa
+Group=medusa
+# Needed to start sandbox containers. Membership of the docker group is
+# root-equivalent, which is why nothing else runs on this host.
+SupplementaryGroups=docker
+WorkingDirectory=/opt/medusa/backend
+# Secrets and settings live outside the repo.
+EnvironmentFile=/etc/medusa/env
+# One worker: run state lives in process memory.
+ExecStart=/opt/medusa/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

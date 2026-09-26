@@ -6,6 +6,10 @@ from pydantic import BaseModel
 
 Priority = Literal["Low", "Medium", "High"]
 Mode = Literal["sandboxed", "reasoning"]
+# Who produced the investigation shown in a reproduce run.
+InvestigatorSource = Literal["bob_replay", "granite", "unavailable"]
+# Who produced a fix candidate.
+CandidateOrigin = Literal["granite", "prepared"]
 
 # ── Core models ────────────────────────────────────────────────────────────────
 
@@ -21,6 +25,7 @@ class Issue(BaseModel):
     ) = None
     file: str | None = None
     function: str | None = None
+    line: int | None = None
     github_url: str | None = None
 
 
@@ -36,7 +41,8 @@ class ScanResult(BaseModel):
 
 class LogEvent(BaseModel):
     ts: float
-    source: str  # "investigator:1", "synthesis", "sandbox", "candidate:c2", "granite"
+    # e.g. "investigator:runtime", "synthesis", "sandbox", "candidate:c2", "granite"
+    source: str
     level: Literal["info", "warn", "error", "result"]
     message: str
 
@@ -49,6 +55,23 @@ class ReproAttempt(BaseModel):
     log: list[LogEvent] = []
     root_cause: str | None = None
     confidence: float | None = None  # reasoning mode only
+    investigator_source: InvestigatorSource | None = None
+
+
+class TestResults(BaseModel):
+    __test__ = False  # not a pytest test class
+
+    passed: int
+    failed: int
+    total: int
+    reproducer_fixed: bool
+    regressions: list[str] = []  # checks that passed before the patch and fail after
+
+
+class PatchStats(BaseModel):
+    files_changed: int
+    lines_added: int
+    lines_removed: int
 
 
 class FixAttempt(BaseModel):
@@ -56,7 +79,11 @@ class FixAttempt(BaseModel):
     approach: str
     patch: str | None = None  # unified diff
     sandbox_status: Literal["running", "passed", "failed", "not_applicable"]
-    test_results: dict | None = None  # {"passed": int, "failed": int, "total": int}
+    test_results: TestResults | None = None
+    patch_stats: PatchStats | None = None
+    origin: CandidateOrigin | None = None
+    attempts: int = 1  # 2 when revised once after failing tests
+    error: str | None = None  # why a candidate failed before or during its run
     active: bool = True
 
 
@@ -70,3 +97,11 @@ class DebugSession(BaseModel):
 class Recommendation(BaseModel):
     candidate_id: str
     reason: str
+    verified: bool  # True only when chosen from sandbox results
+
+
+class DebugDone(BaseModel):
+    """Payload of the final `done` event on /api/debug/{session_id}/events."""
+
+    session: DebugSession
+    recommendation: Recommendation | None = None

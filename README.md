@@ -2,70 +2,70 @@
 
 > Find the bug, prove it, fix it, and show your work.
 
-IBM Bob 2.0 Hackathon entry (lablab.ai, 25–27 Sep 2026).
+IBM Bob 2.0 Hackathon entry (lablab.ai, 25–27 Sep 2026). Design: [architecture.md](architecture.md).
+
+Medusa scans a codebase for issues, reproduces a chosen issue, races several candidate
+fixes in parallel sandboxes and recommends one based on test evidence.
+
+- **OptiLearn demo (verified):** a real bug in OptiLearn's Whisper fallback. The reproducer and
+  every candidate fix run live in locked-down Docker containers; the recommendation is chosen
+  deterministically from the results, and the fixed code can be downloaded.
+- **Any public GitHub repo or zip (analysis only):** Granite reads the code as text, lists issues,
+  diagnoses one with file/line citations and proposes patches. Nothing is executed, and the UI
+  says so.
 
 ## Running locally
 
-### Backend (FastAPI)
+Needs Python 3.12+, Node 22+ and Docker.
 
 ```bash
+# Sandbox image (needed for the OptiLearn demo)
+docker build -t medusa-optilearn:latest sandbox/optilearn
+
+# Backend
 cd backend
-python -m venv .venv
-
-# Activate the virtualenv
-# macOS/Linux:
-source .venv/bin/activate
-# Windows:
-.venv\Scripts\activate
-
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # fill in WATSONX_* values
+cp .env.example .env        # fill in IBM_WATSONX_* (optional: without it, no Granite features)
 uvicorn app.main:app --reload --port 8000
-```
 
-API available at http://localhost:8000  
-Interactive docs at http://localhost:8000/docs
-
-### Frontend (Next.js)
-
-```bash
+# Frontend (second terminal)
 cd frontend
 npm install
-cp .env.example .env.local  # already has NEXT_PUBLIC_API_URL=http://localhost:8000
-npm run dev
+cp .env.example .env.local
+npm run dev                 # http://localhost:3000
 ```
 
-App available at http://localhost:3000
+Tests and lint:
+
+```bash
+cd backend && pytest && ruff check . && ruff format --check .   # sandbox tests skip without Docker
+cd frontend && npm run typecheck && npm run build
+```
 
 ## Project structure
 
 ```
 medusa/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app, CORS, all stub routes
-│   │   ├── config.py            # env vars and all limits in one place
-│   │   └── models/contracts.py  # Pydantic data contracts (source of truth)
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/
-│   ├── app/
-│   │   ├── layout.tsx
-│   │   ├── page.tsx             # Landing — Run demo / Link GitHub / Upload zip
-│   │   ├── issues/page.tsx      # Issue list placeholder
-│   │   ├── investigate/[id]/page.tsx  # Live investigator view placeholder
-│   │   └── scan/
-│   │       ├── github/page.tsx  # GitHub URL entry placeholder
-│   │       └── upload/page.tsx  # Zip upload entry placeholder
-│   ├── lib/api.ts               # Typed fetch wrapper + EventSource helpers
-│   └── .env.example
-├── bob_sessions/                # Bob IDE task summary screenshots (PNG)
-├── CLAUDE.md                    # Agent context and hard rules
-├── PROJECT.md                   # Full plan, timeline, team split
-└── README.md
+├── backend/app/
+│   ├── api/            scan.py, runs.py (repro, debug, SSE, download), health.py
+│   ├── pipelines/      scan.py (Granite chunks), repro.py, debug.py, verify.py, context.py
+│   ├── agents/         granite.py (watsonx REST), investigators.py, fixers.py, bob.py (replay)
+│   ├── sandbox/        runner.py — the only place code executes
+│   ├── demo/           OptiLearn scenario and demo scan fixture
+│   ├── ingest/         GitHub tarball + zip ingest with limits and safe extraction
+│   └── models/contracts.py   data contracts (mirrored in frontend/lib/api.ts)
+├── sandbox/optilearn/
+│   ├── Dockerfile      sandbox image
+│   ├── src/            OptiLearn subset at the buggy commit
+│   ├── harness/        reproducer, behaviour checks, result reporter
+│   └── prepared/       fallback fix candidates, used when Granite is unavailable
+├── golden/optilearn/   recorded Bob run goes here (replayed when present)
+├── frontend/           Next.js 16 App Router (landing, issues, investigate)
+├── deploy/             nginx, systemd units, setup.sh, deploy guide
+└── bob_sessions/       Bob IDE task screenshots
 ```
 
-## Data contracts
+## Deploying
 
-`backend/app/models/contracts.py` is the source of truth for all data shapes.  
-`frontend/lib/api.ts` mirrors every type — change one, change the other in the same commit.
+See [deploy/README.md](deploy/README.md): one Ubuntu EC2 instance, `deploy/setup.sh` installs everything.

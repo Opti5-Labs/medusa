@@ -1,0 +1,21 @@
+[Unit]
+Description=Medusa frontend (Next.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=medusa
+Group=medusa
+WorkingDirectory=/opt/medusa/frontend
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+ExecStart=/opt/medusa/frontend/node_modules/.bin/next start --hostname 127.0.0.1 --port 3000
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

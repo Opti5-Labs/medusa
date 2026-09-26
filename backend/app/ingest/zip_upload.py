@@ -10,6 +10,7 @@ The caller is responsible for cleaning up tmp_dir on failure.
 On success, pass tmp_dir to RunStore.create so TTL expiry removes everything.
 """
 
+import asyncio
 import logging
 import shutil
 import tempfile
@@ -61,7 +62,8 @@ async def ingest_zip(upload: UploadFile) -> tuple[Path, Path]:
         extract_dir = tmp_dir / "extracted"
         extract_dir.mkdir()
 
-        repo_root = extract_zip(zip_path, extract_dir)
+        # Extraction is CPU/disk bound: keep it off the event loop.
+        repo_root = await asyncio.to_thread(extract_zip, zip_path, extract_dir)
         return tmp_dir, repo_root
 
     except MedusaError:

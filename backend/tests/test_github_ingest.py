@@ -7,6 +7,7 @@ import io
 import tarfile
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 import httpx
@@ -96,7 +97,7 @@ async def test_ingest_github_happy_path():
 
     class _StreamResp:
         status_code = 200
-        headers: dict = {}
+        headers: ClassVar[dict] = {}
 
         async def aiter_bytes(self, chunk_size=65536):
             yield tarball
@@ -284,7 +285,7 @@ async def test_streaming_byte_cap_aborts(monkeypatch):
 
     class _StreamResp:
         status_code = 200
-        headers: dict = {}
+        headers: ClassVar[dict] = {}
 
         async def aiter_bytes(self, chunk_size=65536):
             yield big_payload

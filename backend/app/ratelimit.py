@@ -2,7 +2,7 @@
 Per-IP sliding-window rate limiter (no external dependency).
 
 Usage:
-    limiter = RateLimiter(max_calls=5, window_seconds=600)
+    limiter = RateLimiter(max_calls=5, window_seconds=600, what="scans")
 
     @app.post("/api/scan")
     async def scan(request: Request):
@@ -11,26 +11,28 @@ Usage:
 
 IP resolution:
     By default the socket peer address is used.
-    Set TRUST_FORWARDED_FOR=true in the environment when running behind a
-    trusted nginx proxy that sets X-Forwarded-For correctly.
+    Set TRUST_FORWARDED_FOR=true when running behind the nginx proxy in deploy/.
+    The *last* X-Forwarded-For entry is used: nginx appends the real peer
+    address, while earlier entries are whatever the client sent.
 """
 
 import collections
 import math
-import os
 import time
 
 from fastapi import Request
 
+from app import config
 from app.errors import MedusaError
 
-_TRUST_FORWARDED_FOR: bool = os.getenv("TRUST_FORWARDED_FOR", "false").lower() == "true"
+# Sweep idle IPs once the table grows past this many entries.
+_SWEEP_THRESHOLD = 10_000
 
 
 def _client_ip(request: Request) -> str:
-    if _TRUST_FORWARDED_FOR:
+    if config.TRUST_FORWARDED_FOR:
         forwarded = request.headers.get("X-Forwarded-For", "")
-        ip = forwarded.split(",")[0].strip()
+        ip = forwarded.split(",")[-1].strip()
         if ip:
             return ip
     if request.client:
@@ -39,11 +41,14 @@ def _client_ip(request: Request) -> str:
 
 
 class RateLimiter:
-    """Thread-safe sliding-window limiter using a deque per IP."""
+    """Sliding-window limiter using a deque of timestamps per IP."""
 
-    def __init__(self, max_calls: int, window_seconds: int) -> None:
+    def __init__(
+        self, max_calls: int, window_seconds: int, what: str = "scans"
+    ) -> None:
         self._max = max_calls
         self._window = window_seconds
+        self._what = what
         # ip -> deque of timestamps (monotonic)
         self._windows: dict[str, collections.deque[float]] = collections.defaultdict(
             collections.deque
@@ -56,10 +61,12 @@ class RateLimiter:
         """
         ip = _client_ip(request)
         now = time.monotonic()
+        cutoff = now - self._window
+        if len(self._windows) > _SWEEP_THRESHOLD:
+            self._evict_idle(cutoff)
         dq = self._windows[ip]
 
         # Evict timestamps outside the window
-        cutoff = now - self._window
         while dq and dq[0] <= cutoff:
             dq.popleft()
 
@@ -72,17 +79,13 @@ class RateLimiter:
                 wait_str = f"{wait_s} second(s)"
             raise MedusaError(
                 429,
-                f"Too many scans. Please wait {wait_str} before trying again.",
+                f"Too many {self._what}. Please wait {wait_str} before trying again.",
             )
 
         dq.append(now)
 
-        # Evict empty deques to prevent unbounded dict growth
-        if not dq:  # pragma: no cover  (only if max_calls == 0)
-            del self._windows[ip]
-
-    def _evict_empty(self) -> None:
-        """Remove IPs whose deque is empty (call periodically if needed)."""
-        empty = [ip for ip, dq in self._windows.items() if not dq]
-        for ip in empty:
+    def _evict_idle(self, cutoff: float) -> None:
+        """Remove IPs with no calls inside the current window."""
+        idle = [ip for ip, dq in self._windows.items() if not dq or dq[-1] <= cutoff]
+        for ip in idle:
             del self._windows[ip]
