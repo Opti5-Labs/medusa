@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   getAskStatus,
   openAskStream,
@@ -20,7 +20,8 @@ import Badge, { type Tone } from "./Badge";
 const PLACEHOLDER =
   "Ask anything about this repo... e.g. What are the issues? Why does it happen? How do I fix it?";
 const LOST_CONNECTION = "Lost the connection to the server. Please try again.";
-const PRIORITY_RANK = { High: 0, Medium: 1, Low: 2 } as const;
+const NEAR_BOTTOM_PX = 48;
+const PRIORITY_RANK ={ High: 0, Medium: 1, Low: 2 } as const;
 
 const GROUNDING: Record<Grounding, { tone: Tone; label: string }> = {
   scan_data: { tone: "gray", label: "From scan data" },
@@ -136,6 +137,8 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
   const input = useRef<HTMLTextAreaElement>(null);
   const latest = useRef<string | null>(null);
   const seq = useRef(0);
+  const panel = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
 
   const scoped = routeId ? scan.issues.find((i) => i.id === routeId) : undefined;
   const scopedId = scoped && wholeRepoFor !== scoped.id ? scoped.id : undefined;
@@ -167,6 +170,7 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
     if (!q || busy) return;
     const msgId = `q${++seq.current}`;
     latest.current = msgId;
+    stick.current = true; // a new question always pins the panel to the bottom
     dispatch({ type: "add", message: { id: msgId, question: q, text: "", status: "pending" } });
     setValue("");
     setPanelOpen(true);
@@ -180,6 +184,27 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
         dispatch({ type: "fail", id: msgId, error: message });
         if (/expired/i.test(message)) setExpired(msgId);
       });
+  }
+
+  // Chat-style scrolling: pin to the bottom after each update, unless the user scrolled up.
+  // Jumps are instant, which also honours prefers-reduced-motion and keeps scroll events honest.
+  const panelVisible = panelOpen && messages.length > 0;
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [messages, panelVisible]);
+
+  // Reopening the panel starts at the bottom.
+  useLayoutEffect(() => {
+    if (!panelVisible) return;
+    stick.current = true;
+    const el = panel.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [panelVisible]);
+
+  function onPanelScroll() {
+    const el = panel.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
   }
 
   // Grow the textarea with its content (1 to 5 rows).
@@ -315,9 +340,14 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
       </div>
 
       {panelOpen && messages.length > 0 && (
-        <div className="absolute left-0 right-0 top-full pointer-events-none">
+        <div className="absolute left-0 right-0 top-full z-10 pointer-events-none">
           <div className="mx-auto max-w-5xl px-4 sm:px-6">
-            <div className="pointer-events-auto max-h-[65vh] overflow-y-auto rounded-b-lg border border-gray-200 dark:border-gray-800 shadow-lg bg-white dark:bg-gray-900 p-4 space-y-5">
+            {/* The scroll container is itself the opaque surface: no padding strip or rounded corner outside it. */}
+            <div
+              ref={panel}
+              onScroll={onPanelScroll}
+              className="pointer-events-auto max-h-[65vh] overflow-y-auto overscroll-contain border-x border-b border-gray-200 dark:border-gray-800 shadow-lg bg-white dark:bg-gray-900 p-4 space-y-5"
+            >
               {messages.map((m) => (
                 <MessageView key={m.id} message={m} expired={expired === m.id} />
               ))}
