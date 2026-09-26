@@ -120,6 +120,17 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
         </p>
       )}
 
+      {finished && attempt.reproducer_test && (
+        <details className="rounded-md border border-gray-200 dark:border-gray-800 p-3 text-sm" open>
+          <summary className="cursor-pointer font-medium">
+            Reproducer test (failed on the original code in the sandbox)
+          </summary>
+          <pre className="mt-2 max-h-72 overflow-auto rounded bg-gray-50 dark:bg-gray-900 p-2 font-mono text-xs leading-relaxed">
+            {attempt.reproducer_test}
+          </pre>
+        </details>
+      )}
+
       {finished && attempt.investigators.length > 0 && (
         <div className="inset-grid">
           {attempt.investigators.map((r) => (

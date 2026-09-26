@@ -85,6 +85,10 @@ class ReproRun:
     baseline: Any = None  # SandboxResult on the original code (sandboxed mode)
     evidence: str | None = None  # sandbox runtime evidence given to investigators
     investigations: list = field(default_factory=list)  # InvestigatorResult per agent
+    reproducer_test: str | None = (
+        None  # general repos: the test that reproduced the bug
+    )
+    exec_baseline: Any = None  # general repos: pyexec.TestRun on the original code
     task: asyncio.Task | None = None
     created_at: float = field(default_factory=time.monotonic)
 

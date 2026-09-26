@@ -83,6 +83,9 @@ class ReproAttempt(BaseModel):
     confidence: float | None = None  # reasoning mode only
     investigator_source: InvestigatorSource | None = None
     investigators: list[InvestigatorReport] = []
+    # General repos run in the sandbox: the model-written test that reproduced
+    # the bug (it failed on the original code), shown as evidence.
+    reproducer_test: str | None = None
 
 
 class TestResults(BaseModel):

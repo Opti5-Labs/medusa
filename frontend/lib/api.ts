@@ -109,6 +109,8 @@ export interface ReproAttempt {
   confidence: number | null;
   investigator_source: InvestigatorSource | null;
   investigators: InvestigatorReport[];
+  /** General repos run in the sandbox: the test that reproduced the bug. */
+  reproducer_test: string | null;
 }
 
 export interface TestResults {

@@ -146,7 +146,11 @@ class _Collector:
             if len(g["failures"]) < 50:
                 g["failures"].append(report.nodeid)
         if group == "reproducer":
-            self.repro_outcome = outcome
+            # Any failing reproducer test is the evidence; an error only counts
+            # when nothing failed, and "passed" needs every reproducer test to pass.
+            rank = {"failed": 3, "error": 2, "passed": 1}
+            if rank[outcome] > rank.get(self.repro_outcome or "", 0):
+                self.repro_outcome = outcome
         detail = ""
         if outcome != "passed" and report.longrepr is not None:
             crash = getattr(report.longrepr, "reprcrash", None)

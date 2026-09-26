@@ -4,8 +4,11 @@ Reproduce pipeline.
 sandboxed (OptiLearn demo):
     reproducer on the original code in the sandbox → reproduced | not_reproducible
     → Bob and Granite investigate the observed failure independently, in parallel
-reasoning (general repos):
+general repos:
     Bob and Granite read the relevant files independently → plausible + confidence
+    → when the repo can be run (ARBITRARY_EXECUTION, Python with tests): a
+      model-written reproducer test runs in the gVisor sandbox with the repo's
+      own suite; if it fails on the original code the bug is reproduced
 
 Every run ends with a `done` event carrying the final ReproAttempt. Any failure
 ends in a visible `error` event and status "error".
@@ -18,10 +21,14 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from app import config
 from app.agents import panel
+from app.agents.reproducer import write_reproducer
 from app.demo import optilearn
 from app.models.contracts import Issue, ReproAttempt
 from app.pipelines.context import select_files_for
+from app.pipelines.execution import execution_ineligible_reason
+from app.sandbox import pyexec
 from app.sandbox.runner import SandboxResult, run_checks, sandbox_unavailable_reason
 from app.store import ReproRun, RunStore, ScanRecord
 from app.streaming import EventChannel
@@ -211,3 +218,125 @@ async def _run_reasoning(run: ReproRun, record: ScanRecord, issue: Issue) -> Non
     attempt.status = "plausible"
     attempt.root_cause = root_cause
     attempt.confidence = panel.reported_confidence(results) or 0.0
+
+    # If this repo can be run, try to confirm the diagnosis with a real failing test.
+    why_not = execution_ineligible_reason(record) or await asyncio.to_thread(
+        pyexec.unavailable_reason
+    )
+    if why_not is None:
+        await _try_live_reproduction(run, record, issue, files, root_cause)
+    elif record.result.repo_source in ("github", "zip"):
+        await ch.emit(
+            "sandbox", "info", f"Not running this repository's code: {why_not}"
+        )
+
+
+_REPRO_ATTEMPTS = 2
+
+
+def _repro_feedback(lines: list[str], run: pyexec.TestRun) -> str:
+    """What the model is told when its test did not reproduce the bug."""
+    if run.repro_outcome == "passed":
+        head = "The test PASSED on the current code, so it does not capture the bug."
+    else:
+        head = "The test did not run cleanly (an error, not a test failure)."
+    relevant = [
+        line
+        for line in lines
+        if "test_medusa_repro" in line or line.startswith(("COLLECT-ERROR", "      "))
+    ]
+    return head + "\n" + "\n".join(relevant[-20:])[:3000]
+
+
+def _runtime_name() -> str:
+    if config.EXEC_RUNTIME == "runsc":
+        return "gVisor"
+    return f"{config.EXEC_RUNTIME} (development only)"
+
+
+async def _try_live_reproduction(
+    run: ReproRun,
+    record: ScanRecord,
+    issue: Issue,
+    files: dict[str, str],
+    root_cause: str,
+) -> None:
+    """Upgrade a plausible diagnosis to `reproduced` when a real test confirms it."""
+    ch, attempt = run.channel, run.attempt
+    await ch.emit(
+        "sandbox",
+        "info",
+        f"Running this repository's code in an isolated {_runtime_name()} sandbox",
+    )
+
+    async def on_line(line: str) -> None:
+        await ch.emit("sandbox", "info", line)
+
+    prep = await pyexec.prepare(record.root, on_line)
+    if prep.env is None:
+        await ch.emit("sandbox", "warn", f"Could not run the repository: {prep.error}")
+        return
+    try:
+        if prep.env.install_errors:
+            await ch.emit(
+                "sandbox",
+                "warn",
+                f"Some dependencies did not install: {'; '.join(prep.env.install_errors)[:500]}",
+            )
+        previous: str | None = None
+        feedback: str | None = None
+        for n in range(1, _REPRO_ATTEMPTS + 1):
+            await ch.emit(
+                "reproducer", "info", f"Writing a reproducer test (attempt {n})"
+            )
+            draft = await write_reproducer(
+                issue, files, root_cause, previous=previous, feedback=feedback
+            )
+            if draft.source is None:
+                await ch.emit(
+                    "reproducer", "warn", f"No reproducer test: {draft.error}"
+                )
+                return
+            await ch.emit(
+                "reproducer", "info", f"Test written by {draft.author}; running it"
+            )
+            lines: list[str] = []
+
+            async def collect(line: str, lines: list[str] = lines) -> None:
+                lines.append(line)
+                await on_line(line)
+
+            result = await pyexec.run_tests(prep.env, collect, repro_test=draft.source)
+            if not result.ok:
+                await ch.emit(
+                    "sandbox", "warn", f"The sandbox run failed: {result.error}"
+                )
+                return
+            if result.repro_outcome == "failed":
+                attempt.mode = "sandboxed"
+                attempt.status = "reproduced"
+                attempt.confidence = None  # confirmed by a test, not estimated
+                attempt.reproducer_test = draft.source
+                run.reproducer_test = draft.source
+                run.exec_baseline = result
+                s = result.suite
+                await ch.emit(
+                    "sandbox",
+                    "result",
+                    "Reproduced: the reproducer test fails on the original code. "
+                    f"The repository's own suite: {s.passed}/{s.total} passed.",
+                )
+                return
+            previous, feedback = draft.source, _repro_feedback(lines, result)
+            outcome = "passed" if result.repro_outcome == "passed" else "errored"
+            await ch.emit(
+                "reproducer", "warn", f"The test {outcome} instead of failing"
+            )
+        await ch.emit(
+            "sandbox",
+            "warn",
+            "Could not confirm the bug with a failing test, so the result stays an "
+            "analysis (plausible), not a reproduction.",
+        )
+    finally:
+        await pyexec.release(prep.env)
