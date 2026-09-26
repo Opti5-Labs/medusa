@@ -31,7 +31,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo "==> downloading ${SHA:0:7}"
 curl -fsS --retry 3 -o "$WORK/release.tar.gz" "$URL"
-EMBEDDED=$(gunzip -c "$WORK/release.tar.gz" | git get-tar-commit-id)
+# get-tar-commit-id stops after the header, so gunzip may get SIGPIPE: ignore its status.
+EMBEDDED=$( (gunzip -c "$WORK/release.tar.gz" 2>/dev/null || true) | git get-tar-commit-id)
 [ "$EMBEDDED" = "$SHA" ] || { echo "archive is commit $EMBEDDED, expected $SHA"; exit 1; }
 
 mkdir "$WORK/src"
