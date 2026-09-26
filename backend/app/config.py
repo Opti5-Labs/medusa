@@ -137,6 +137,10 @@ BOB_MAX_COST: float = float(
     os.getenv("BOB_MAX_COST", "0.25")
 )  # Bobcoins per investigation
 BOB_MAX_TURNS: int = int(os.getenv("BOB_MAX_TURNS", "6"))
+# Server-wide cap on live Bob spend per UTC day (0 disables it). The running
+# total survives restarts in BOB_BUDGET_FILE (empty: kept in memory only).
+BOB_DAILY_BUDGET: float = float(os.getenv("BOB_DAILY_BUDGET", "5.0"))
+BOB_BUDGET_FILE: str = os.getenv("BOB_BUDGET_FILE", "~/.medusa/bob-budget.json")
 BOB_TIMEOUT_S: int = int(os.getenv("BOB_TIMEOUT_S", "180"))
 BOB_MAX_CONCURRENT: int = 2
 BOB_REPLAY_DELAY_S: float = 0.35  # pacing between replayed events

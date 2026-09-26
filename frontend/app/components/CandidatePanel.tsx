@@ -40,11 +40,12 @@ interface Props {
   recommended: boolean;
   finished: boolean;
   downloadUrl: string | null;
+  patchUrl: string | null;
   canHide: boolean;
   onHide: () => void;
 }
 
-export default function CandidatePanel({ candidate: c, mode, log, recommended, finished, downloadUrl, canHide, onHide }: Props) {
+export default function CandidatePanel({ candidate: c, mode, log, recommended, finished, downloadUrl, patchUrl, canHide, onHide }: Props) {
   const r = c.test_results;
   const s = c.patch_stats;
   return (
@@ -121,13 +122,24 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
         </details>
       )}
 
-      {finished && downloadUrl && (
-        <a
-          href={downloadUrl}
-          className="btn btn-primary btn-sm"
-        >
-          Download fixed code (.zip)
-        </a>
+      {finished && (downloadUrl || patchUrl) && (
+        <div className="actions">
+          {downloadUrl && (
+            <a href={downloadUrl} className="btn btn-primary btn-sm">
+              Download fixed code (.zip)
+            </a>
+          )}
+          {patchUrl && (
+            <a
+              href={patchUrl}
+              title="A unified diff you can apply from the repository root with git apply"
+              className="btn btn-secondary btn-sm"
+            >
+              {mode === "sandboxed" ? "Download .patch" : "Download .patch (untested)"}
+            </a>
+          )}
+        </div>
+      )}
       )}
     </article>
   );
