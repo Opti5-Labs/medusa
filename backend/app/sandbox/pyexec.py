@@ -44,7 +44,6 @@ log = logging.getLogger(__name__)
 LineCallback = Callable[[str], Awaitable[None]]
 _INSTALL_PREFIX = "MEDUSA_INSTALL "
 _RESULT_PREFIX = "MEDUSA_RESULT "
-_PROXY_URL = f"http://{config.EXEC_PROXY_NAME}:3128"
 _SQUID_CONF = config.REPO_ROOT / "sandbox" / "egress-proxy" / "squid.conf"
 _loop_semaphores: dict[tuple[int, str], asyncio.Semaphore] = {}
 
@@ -192,15 +191,18 @@ def _base_kwargs(code_dir: Path) -> dict:
     }
 
 
-def install_kwargs(code_dir: Path, volume: str) -> dict:
+def install_kwargs(code_dir: Path, volume: str, proxy_ip: str) -> dict:
     kw = _base_kwargs(code_dir)
     kw["command"] = ["install"]
     kw["network"] = config.EXEC_NETWORK  # internal: the proxy is the only way out
+    # By IP: gVisor's network stack bypasses Docker's embedded DNS, so container
+    # names do not resolve inside the sandbox. The proxy resolves PyPI itself.
+    proxy = f"http://{proxy_ip}:3128"
     kw["environment"] = {
-        "HTTPS_PROXY": _PROXY_URL,
-        "HTTP_PROXY": _PROXY_URL,
-        "https_proxy": _PROXY_URL,
-        "http_proxy": _PROXY_URL,
+        "HTTPS_PROXY": proxy,
+        "HTTP_PROXY": proxy,
+        "https_proxy": proxy,
+        "http_proxy": proxy,
     }
     kw["tmpfs"] = {
         "/tmp": "rw,nosuid,size=512m,mode=1777",
@@ -226,8 +228,8 @@ def test_kwargs(code_dir: Path, volume: str, inputs_dir: Path) -> dict:
     return kw
 
 
-def _ensure_egress(client) -> None:
-    """The internal network and the PyPI-only proxy that is its only exit."""
+def _ensure_egress(client) -> str:
+    """The internal network and the PyPI-only proxy that is its only exit; returns the proxy's IP on it."""
     import docker
 
     try:
@@ -254,6 +256,11 @@ def _ensure_egress(client) -> None:
         proxy.attrs.get("NetworkSettings", {}).get("Networks") or {}
     ):
         network.connect(proxy)
+        proxy.reload()
+    ip = proxy.attrs["NetworkSettings"]["Networks"][config.EXEC_NETWORK]["IPAddress"]
+    if not ip:
+        raise RuntimeError("the egress proxy has no address on the internal network")
+    return ip
 
 
 async def _run(
@@ -368,7 +375,7 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
     env = ExecEnv(volume=volume, code_dir=snapshot, holds_slot=True)
     try:
         client = await asyncio.to_thread(_client)
-        await asyncio.to_thread(_ensure_egress, client)
+        proxy_ip = await asyncio.to_thread(_ensure_egress, client)
         await asyncio.to_thread(_create_deps_volume, client, env)
     except Exception as exc:
         log.exception("pyexec: could not prepare the environment")
@@ -380,7 +387,7 @@ async def prepare(code_dir: Path, on_line: LineCallback) -> PrepareResult:
     await on_line("Installing the repository's dependencies (PyPI only)")
     async with _semaphore():
         line, error = await _run(
-            install_kwargs(env.code_dir, volume),
+            install_kwargs(env.code_dir, volume, proxy_ip),
             config.EXEC_INSTALL_TIMEOUT_S,
             _INSTALL_PREFIX,
             on_line,

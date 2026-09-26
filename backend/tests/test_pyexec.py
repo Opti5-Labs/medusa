@@ -74,10 +74,11 @@ def _common(kw: dict, code: Path) -> None:
 
 def test_install_phase_reaches_only_the_egress_network(enabled, tmp_path, monkeypatch):
     monkeypatch.setenv("WATSONX_API_KEY", "must-not-leak")
-    kw = pyexec.install_kwargs(tmp_path, "vol")
+    kw = pyexec.install_kwargs(tmp_path, "vol", "172.30.0.2")
     _common(kw, tmp_path)
     assert kw["network"] == config.EXEC_NETWORK
     assert "network_disabled" not in kw
+    assert kw["environment"]["HTTPS_PROXY"] == "http://172.30.0.2:3128"
     assert set(kw["environment"]) == {
         "HTTPS_PROXY",
         "HTTP_PROXY",
@@ -187,6 +188,9 @@ async def test_reproduce_then_verify_a_fix_end_to_end(tmp_path, monkeypatch):
 
     prep = await pyexec.prepare(tmp_path, _noop)
     assert prep.env is not None, prep.error
+    # a real install through the PyPI-only proxy (pytest is also in the image,
+    # so without this the test would pass with the network broken)
+    assert "group:tests" in prep.env.installed, prep.env.install_errors
     try:
         before = await pyexec.run_tests(prep.env, _noop, repro_test=_REPRO)
         assert before.repro_outcome == "failed"  # the bug reproduces
@@ -276,12 +280,13 @@ async def test_output_floods_are_bounded(tmp_path, monkeypatch):
         tmp_path,
         {
             # Repo code runs inside the harness process, so it can find the
-            # container's real stdout (pytest keeps a copy) and write past capture.
+            # container's real stdout (pytest keeps a copy) and write past
+            # capture. Every non-file descriptor: gVisor labels them differently.
             "conftest.py": (
                 "import os\n"
                 "for fd in map(int, os.listdir('/proc/self/fd')):\n"
                 "    try:\n"
-                "        if os.readlink(f'/proc/self/fd/{fd}').startswith('pipe:'):\n"
+                "        if not os.readlink(f'/proc/self/fd/{fd}').startswith('/'):\n"
                 "            os.write(fd, b'x' * 500_000)\n"  # one huge line, no newline
                 "            for _ in range(3000):\n"
                 "                os.write(fd, b'noise\\n')\n"
