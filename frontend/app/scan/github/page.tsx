@@ -4,10 +4,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useRef } from "react";
 import { postScan, ScanResult } from "../../../lib/api";
+import AssessingStatus from "../../components/AssessingStatus";
 
 // Same pattern the server validates — https://github.com/{owner}/{repo}
 const GITHUB_URL_RE =
   /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*(\.git|\/)?$/;
+
+// The steps /api/scan really runs for a linked repository.
+const SCAN_STEPS = [
+  "Downloading the repository",
+  "Selecting the source files to analyse",
+  "Reviewing the code for issues",
+  "Fetching the repository's open GitHub Issues",
+];
 
 type Stage = "idle" | "scanning" | "done";
 
@@ -132,9 +141,11 @@ export default function ScanGitHubPage() {
 
         {/* Stage text */}
         {stage === "scanning" && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 animate-pulse">
-            Downloading the repository, then reviewing the code. This can take up to 90 seconds.
-          </p>
+          <AssessingStatus
+            steps={SCAN_STEPS}
+            stepMs={2200}
+            note="Code is read as text and never executed. This can take up to 90 seconds."
+          />
         )}
 
         {/* Server error */}

@@ -119,7 +119,13 @@ def make_workdir(parent: Path, name: str, target_text: str | None = None) -> Pat
     dest = parent / name
     shutil.copytree(OPTILEARN_SRC, dest)
     if target_text is not None:
-        (dest / TARGET_FILE).write_text(target_text, encoding="utf-8")
+        # newline="" disables universal-newline translation: without it,
+        # Python's text-mode write on Windows silently turns every embedded
+        # \n into \r\n, so a patched file zipped for download would have
+        # different line endings than the (LF) source it was spliced from
+        # and than what tests compare against. Harmless on Linux (its
+        # default is already \n), but a real, test-caught bug on Windows.
+        (dest / TARGET_FILE).write_text(target_text, encoding="utf-8", newline="")
     return dest
 
 

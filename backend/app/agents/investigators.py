@@ -101,12 +101,15 @@ async def investigate_demo(
     files: dict[str, str],
     channel: EventChannel,
     runtime_evidence: str | None = None,
-) -> Synthesis:
+) -> tuple[Synthesis, RuntimeFinding, RepositoryFinding]:
     """
     Run the four-step investigation, streaming each finding. Raises GraniteError.
 
     *runtime_evidence* is what actually happened in the sandbox (the failing
-    test, its source and its assertion output). Findings must be consistent with it.
+    test, its source and its assertion output). Findings must be consistent
+    with it. Returns the synthesis plus the two findings it was built from,
+    so callers can show the trigger conditions and execution trace, not just
+    the final root cause.
     """
     sources = format_sources(files)
     context = f"Bug report:\n{_issue_text(issue)}\n\nSource code:\n{sources}"
@@ -205,7 +208,7 @@ async def investigate_demo(
         Synthesis,
     )
     await channel.emit("synthesis", "result", f"Root cause: {synthesis.root_cause}")
-    return synthesis
+    return synthesis, runtime, repository
 
 
 async def diagnose_general(

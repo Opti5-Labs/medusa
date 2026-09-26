@@ -1,0 +1,5 @@
+[tool.ruff]
+# Real excerpts from another project's history (see golden/optilearn_demo_issues/README.md),
+# bundled for the demo's reasoning-mode issues. Deliberately incomplete slices
+# of much larger files — not this project's code, not meant to lint clean.
+extend-exclude = ["golden/optilearn_demo_issues"]

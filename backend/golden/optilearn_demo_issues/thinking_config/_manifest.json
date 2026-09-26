@@ -1,0 +1,10 @@
+{
+  "optilearn/app/services/model_client.py": {
+    "file": "model_client.py",
+    "start_line": 477
+  },
+  "optilearn/app/services/tts_client.py": {
+    "file": "tts_client.py",
+    "start_line": 226
+  }
+}

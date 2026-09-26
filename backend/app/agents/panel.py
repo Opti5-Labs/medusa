@@ -134,13 +134,17 @@ async def _granite_demo(
         result = unavailable("granite", "Granite is not configured on this server.")
     else:
         try:
-            synth = await investigate_demo(issue, files, channel, evidence)
+            synth, runtime, repository = await investigate_demo(
+                issue, files, channel, evidence
+            )
             result = InvestigatorResult(
                 investigator="granite",
                 status="ok",
                 root_cause=synth.root_cause,
                 evidence=synth.evidence,
                 confidence=synth.confidence,
+                trigger_conditions=runtime.trigger_conditions,
+                execution_trace=repository.execution_trace,
             )
         except granite.GraniteError as exc:
             result = _granite_failure(exc)

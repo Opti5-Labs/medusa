@@ -31,6 +31,12 @@ class Issue(BaseModel):
     line: int | None = None
     github_url: str | None = None
     found_by: Literal["granite", "bob"] | None = None  # scan issues only
+    # Whether THIS issue's Reproduce/Debug run in a sandbox or as text-only
+    # reasoning. Almost always "reasoning" — only issues with a bundled
+    # sandbox harness (see demo/optilearn.py) are "sandboxed". A scan's
+    # repo_source is not enough to infer this: the demo mixes one sandboxed
+    # issue with several reasoning-mode ones.
+    mode: Mode = "reasoning"
 
 
 class ScanResult(BaseModel):
@@ -63,6 +69,8 @@ class InvestigatorReport(BaseModel):
     error: str | None = None  # the real reason when not ok
     cost: float | None = None  # Bobcoins (Bob only)
     recorded: bool = False  # replayed from a recorded Bob session
+    trigger_conditions: str | None = None  # demo mode only (Granite's runtime finding)
+    execution_trace: list[str] = []  # demo mode only (Granite's repository finding)
 
 
 class ReproAttempt(BaseModel):

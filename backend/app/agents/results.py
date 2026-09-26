@@ -35,6 +35,14 @@ class InvestigatorResult(BaseModel):
     error: str | None = None  # why it is unavailable / failed / stopped at a limit
     cost: float | None = None  # Bobcoins spent (Bob only)
     recorded: bool = False  # replayed from a recorded session, not run live
+    # The conditions that trigger the failure (demo mode only, from Granite's
+    # runtime finding) and the step-by-step trace through the code that
+    # reaches the bad line (demo mode, from Granite's repository finding).
+    # Both are the same real findings already streamed as log events; these
+    # just carry them through structured so the UI can show them as more
+    # than scrolling text.
+    trigger_conditions: str | None = None
+    execution_trace: list[str] = []
 
     @property
     def ok(self) -> bool:
@@ -51,6 +59,8 @@ class InvestigatorResult(BaseModel):
             error=self.error,
             cost=self.cost,
             recorded=self.recorded,
+            trigger_conditions=self.trigger_conditions,
+            execution_trace=self.execution_trace[:8],
         )
 
 
