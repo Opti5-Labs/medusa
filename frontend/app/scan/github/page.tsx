@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { postScan, ScanResult } from "../../../lib/api";
 import AssessingStatus from "../../components/AssessingStatus";
+import Icon from "../../components/Icon";
+import { rememberScan } from "../../../lib/recentScans";
 
 // Same pattern the server validates — https://github.com/{owner}/{repo}
 const GITHUB_URL_RE =
@@ -36,6 +38,11 @@ export default function ScanGitHubPage() {
   const [urlError, setUrlError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    const initial = new URLSearchParams(window.location.search).get("repo");
+    if (initial) setUrl(initial);
+  }, []);
+
   function validateUrl(value: string): boolean {
     const normalized = normalizeGithubUrl(value).replace(/\/tree\/.*$/, "").replace(/\/$/, "");
     if (!GITHUB_URL_RE.test(normalized)) {
@@ -59,7 +66,7 @@ export default function ScanGitHubPage() {
         { source: "github", repo_url: normalizeGithubUrl(url) },
         abortRef.current.signal
       );
-      sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
+      rememberScan(result, normalizeGithubUrl(url).replace("https://github.com/", ""));
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;
@@ -81,25 +88,19 @@ export default function ScanGitHubPage() {
   };
 
   return (
-    <div className="max-w-lg space-y-6">
-      <div className="space-y-1">
-        <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
-          Back
-        </Link>
-        <h2 className="text-2xl font-semibold tracking-tight pt-2">Link a GitHub repository</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Medusa reviews a public repository&apos;s code and open GitHub Issues. The code is read
-          as text and never executed, so results are analysis, not test runs. Link a folder with
-          /tree/main/src to scan part of a large repository.
+    <div className="page-narrow page">
+      <header className="page-header">
+        <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
+        <h2 className="title-1">Link a GitHub repository</h2>
+        <p className="page-lede">
+          Medusa reviews a public repository&apos;s code and its open GitHub Issues. The code is read
+          as text and never executed, so results are analysis, not test runs.
         </p>
-      </div>
+      </header>
 
-      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <div className="space-y-1">
-          <label
-            htmlFor="repo-url"
-            className="block text-sm font-medium text-gray-700 dark:text-gray-300"
-          >
+      <form onSubmit={handleSubmit} className="form" noValidate>
+        <div className="field">
+          <label htmlFor="repo-url" className="field-label">
             Repository URL
           </label>
           <input
@@ -113,39 +114,41 @@ export default function ScanGitHubPage() {
             onBlur={() => url && validateUrl(url)}
             placeholder="github.com/owner/repo"
             disabled={stage === "scanning"}
-            aria-describedby={urlError ? "url-error" : undefined}
+            aria-describedby={urlError ? "url-error repo-hint" : "repo-hint"}
             aria-invalid={!!urlError}
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             autoComplete="off"
             spellCheck={false}
           />
           {urlError && (
-            <p id="url-error" role="alert" className="text-xs text-red-600 dark:text-red-400">
+            <p id="url-error" role="alert" className="field-error">
               {urlError}
             </p>
           )}
-          <p className="text-xs text-gray-500 dark:text-gray-400 pt-1">
-            Try{" "}
-            {EXAMPLES.map((example, i) => (
-              <span key={example}>
-                {i > 0 && " or "}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUrl(example);
-                    setUrlError(null);
-                  }}
-                  disabled={stage === "scanning"}
-                  className="font-mono text-verdigris-700 dark:text-verdigris-300 hover:underline"
-                >
-                  {example.replace("https://github.com/", "")}
-                </button>
-              </span>
-            ))}
+          <p id="repo-hint" className="field-hint">
+            To scan part of a large repository, link a folder such as /tree/main/src.
           </p>
         </div>
 
-        {/* Stage text */}
+        <div className="field">
+          <span className="field-label">Or try an example</span>
+          <div className="field-hint">
+            {EXAMPLES.map((example) => (
+              <button
+                key={example}
+                type="button"
+                className="chip-button"
+                onClick={() => {
+                  setUrl(example);
+                  setUrlError(null);
+                }}
+                disabled={stage === "scanning"}
+              >
+                {example.replace("https://github.com/", "")}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {stage === "scanning" && (
           <AssessingStatus
             steps={SCAN_STEPS}
@@ -154,27 +157,18 @@ export default function ScanGitHubPage() {
           />
         )}
 
-        {/* Server error */}
         {error && (
-          <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          <p role="alert" className="alert">
             {error}
           </p>
         )}
 
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={stage === "scanning" || !url.trim()}
-            className="px-5 py-2 rounded-lg bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 text-sm font-medium transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+        <div className="actions">
+          <button type="submit" disabled={stage === "scanning" || !url.trim()} className="btn btn-primary btn-lg">
             {stageText[stage]}
           </button>
           {stage === "scanning" && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="px-5 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
-            >
+            <button type="button" onClick={handleCancel} className="btn btn-secondary btn-lg">
               Cancel
             </button>
           )}

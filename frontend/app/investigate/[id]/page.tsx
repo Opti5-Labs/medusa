@@ -20,6 +20,7 @@ import {
 } from "../../../lib/api";
 import { useRunStream } from "../../../lib/useRunStream";
 import Badge from "../../components/Badge";
+import Icon from "../../components/Icon";
 import CandidatePanel from "../../components/CandidatePanel";
 import LogView from "../../components/LogView";
 import ReproPanel from "../../components/ReproPanel";
@@ -226,13 +227,13 @@ function Investigate() {
   }, [issue, autoAction, run]);
 
   if (scan === undefined) {
-    return <p className="py-16 text-center text-gray-500">Loading…</p>;
+    return <div className="empty-page">Loading…</div>;
   }
   if (!scan || !issue) {
     return (
-      <div className="py-16 text-center space-y-4">
-        <p className="text-gray-500 dark:text-gray-400">This issue is no longer available. Scans expire after 30 minutes.</p>
-        <Link href="/" className="inline-block px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm">
+      <div className="empty-page">
+        <p>This issue is no longer available. Scans are kept for 30 minutes.</p>
+        <Link href="/" className="btn btn-secondary">
           Start a new scan
         </Link>
       </div>
@@ -245,68 +246,51 @@ function Investigate() {
   const reproduced = state.repro.attempt?.status === "reproduced";
 
   return (
-    <div className="space-y-6">
-      <Link href={`/issues?scan=${scan.scan_id}`} className="inline-block text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
-        Back to issues
-      </Link>
-
-      {/* Issue */}
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="page">
+      <header className="page-header">
+        <Link href={`/issues?scan=${scan.scan_id}`} className="back-link"><Icon name="chevron" />Issues</Link>
+        <div className="badges">
           <Badge tone={PRIORITY_TONE[issue.priority]}>{issue.priority}</Badge>
           <Badge>{issue.source === "github_issue" ? "GitHub Issue" : "Code scan"}</Badge>
           {issue.category && <Badge tone="blue">{issue.category}</Badge>}
+          <Badge tone={mode === "sandboxed" ? "green" : "amber"}>{mode === "sandboxed" ? "Sandboxed" : "Analysis only"}</Badge>
         </div>
-        <h2 className="text-2xl font-semibold">{issue.title}</h2>
-        <p className="text-gray-600 dark:text-gray-400">{issue.description}</p>
+        <h2 className="title-1">{issue.title}</h2>
+        <p className="page-lede">{issue.description}</p>
         {issue.file && (
-          <p className="text-xs text-gray-500 font-mono">
+          <p className="code-ref">
             {issue.file}
             {issue.line ? `:${issue.line}` : ""}
             {issue.function ? `, ${issue.function}()` : ""}
           </p>
         )}
-      </section>
+      </header>
 
       {mode === "reasoning" && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/10 p-3 text-sm text-amber-800 dark:text-amber-300">
-          <strong>Analysis only.</strong> This repository&apos;s code is read as text and never executed. Results
-          are model reasoning, not reproductions, and patches are not verified.
+        <div className="notice">
+          <p>
+            <strong>Analysis only.</strong> This repository&apos;s code is read as text and never executed. Results
+            are model reasoning, not reproductions, and patches are not verified.
+          </p>
         </div>
       )}
 
-      {/* Actions */}
-      <section className="flex flex-wrap items-end gap-3">
-        <button
-          onClick={() => run("repro")}
-          disabled={running}
-          className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-900 disabled:opacity-50"
-        >
-          Reproduce
-        </button>
-        <button
-          onClick={() => run("debug")}
-          disabled={running}
-          className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-900 disabled:opacity-50"
-        >
-          Debug
-        </button>
-        <button
-          onClick={() => run("both")}
-          disabled={running}
-          className="px-4 py-2 rounded-lg bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 text-sm font-medium disabled:opacity-50"
-        >
-          Reproduce and Debug
-        </button>
+      <section className="run-bar" aria-label="Run">
+        <div className="actions">
+          <button onClick={() => run("both")} disabled={running} className="btn btn-primary">
+            Reproduce and Debug
+          </button>
+          <button onClick={() => run("repro")} disabled={running} className="btn btn-secondary">
+            Reproduce
+          </button>
+          <button onClick={() => run("debug")} disabled={running} className="btn btn-secondary">
+            Debug
+          </button>
+        </div>
         {mode === "sandboxed" ? (
-          <label className="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-2">
+          <label className="run-option">
             Candidates
-            <select
-              value={candidates}
-              onChange={(e) => setCandidates(Number(e.target.value))}
-              disabled={running}
-              className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5"
-            >
+            <select value={candidates} onChange={(e) => setCandidates(Number(e.target.value))} disabled={running}>
               {[2, 3, 4, 5, 6].map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -315,12 +299,12 @@ function Investigate() {
             </select>
           </label>
         ) : (
-          <span className="text-xs text-gray-500">2 candidate patches for general repositories</span>
+          <span className="run-option">2 candidate patches for general repositories</span>
         )}
       </section>
 
       {startError && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="alert">
           {startError}
         </p>
       )}
@@ -329,28 +313,29 @@ function Investigate() {
         <ReproPanel mode={state.repro.attempt.mode} attempt={state.repro.attempt} log={state.repro.log} error={state.repro.error} />
       )}
 
-      {/* Debug race */}
       {session && (
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-semibold mr-1">{session.mode === "sandboxed" ? "Debug race" : "Proposed fixes"}</h3>
-            <Badge tone={debugRunning ? "blue" : "gray"}>{debugRunning ? "Running…" : "Finished"}</Badge>
-            {session.mode === "sandboxed" && reproduced && <Badge tone="green">Bug gate open</Badge>}
-            {state.hidden.length > 0 && (
-              <button onClick={() => dispatch({ type: "show-all" })} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                Show {state.hidden.length} hidden
-              </button>
-            )}
+        <section className="section" aria-labelledby="debug-heading">
+          <div className="section-head">
+            <h3 id="debug-heading" className="headline">{session.mode === "sandboxed" ? "Debug race" : "Proposed fixes"}</h3>
+            <div className="badges">
+              <Badge tone={debugRunning ? "blue" : "gray"}>{debugRunning ? "Running…" : "Finished"}</Badge>
+              {session.mode === "sandboxed" && reproduced && <Badge tone="green">Bug gate open</Badge>}
+              {state.hidden.length > 0 && (
+                <button onClick={() => dispatch({ type: "show-all" })} className="text-link">
+                  Show {state.hidden.length} hidden
+                </button>
+              )}
+            </div>
           </div>
 
           <LogView events={state.debug.log} maxHeight="max-h-40" emptyText="Starting…" />
           {state.debug.error && (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            <p role="alert" className="alert">
               {state.debug.error}
             </p>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="candidate-grid">
             {visible.map((c) => (
               <CandidatePanel
                 key={c.candidate_id}
@@ -371,22 +356,18 @@ function Investigate() {
           </div>
 
           {state.debug.done && (
-            <div
-              className={`rounded-lg p-4 text-sm ${
-                state.debug.recommendation?.verified
-                  ? "border border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-900/10"
-                  : "border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"
-              }`}
-            >
+            <div className={`card recommendation ${state.debug.recommendation?.verified ? "is-verified" : ""}`}>
               {state.debug.recommendation ? (
                 <>
-                  <p className="font-semibold">
+                  <p className="headline">
                     Recommendation: {state.debug.recommendation.candidate_id}
-                    {state.debug.recommendation.verified ? " (verified in sandbox)" : " (not verified)"}
+                    <span className="recommendation-status">
+                      {state.debug.recommendation.verified ? "Verified in sandbox" : "Not verified"}
+                    </span>
                   </p>
-                  <p className="mt-1 text-gray-700 dark:text-gray-300">{state.debug.recommendation.reason}</p>
+                  <p className="issue-description">{state.debug.recommendation.reason}</p>
                   {session.mode === "sandboxed" && (
-                    <p className="mt-1 text-xs text-gray-500">You can download any other passing candidate from its panel.</p>
+                    <p className="field-hint">You can download any other passing candidate from its panel.</p>
                   )}
                 </>
               ) : (
@@ -402,7 +383,7 @@ function Investigate() {
 
 export default function InvestigatePage() {
   return (
-    <Suspense fallback={<p className="py-16 text-center text-gray-500">Loading…</p>}>
+    <Suspense fallback={<div className="empty-page">Loading…</div>}>
       <Investigate />
     </Suspense>
   );
