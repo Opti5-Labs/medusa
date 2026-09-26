@@ -90,6 +90,26 @@ DEBUG_MAX_CANDIDATES: int = 6
 DEBUG_DEFAULT_CANDIDATES_DEMO: int = 4
 DEBUG_DEFAULT_CANDIDATES_GENERAL: int = 2
 
+# ── General-repo execution (off by default) ─────────────────────────────────────
+# Runs a linked repo's own code: installs its dependencies (PyPI-only proxy) and
+# runs its tests, under gVisor. Off unless ARBITRARY_EXECUTION=true, and it
+# refuses any runtime but runsc unless EXEC_ALLOW_UNSANDBOXED_RUNTIME=true
+# (local development only; never on a public server).
+ARBITRARY_EXECUTION: bool = _env_bool("ARBITRARY_EXECUTION")
+EXEC_IMAGE: str = os.getenv("EXEC_IMAGE", "medusa-pyrunner:latest")
+EXEC_RUNTIME: str = os.getenv("EXEC_RUNTIME", "runsc")
+EXEC_ALLOW_UNSANDBOXED_RUNTIME: bool = _env_bool("EXEC_ALLOW_UNSANDBOXED_RUNTIME")
+EXEC_PROXY_IMAGE: str = os.getenv("EXEC_PROXY_IMAGE", "ubuntu/squid:6.6-24.04_edge")
+EXEC_PROXY_NAME: str = "medusa-egress-proxy"
+EXEC_NETWORK: str = "medusa-egress"
+EXEC_MEM_LIMIT: str = "1g"
+EXEC_NANO_CPUS: int = 1_000_000_000  # 1 CPU
+EXEC_PIDS_LIMIT: int = 512
+EXEC_DEPS_SIZE: str = "1g"  # RAM cap on what one repo can install
+EXEC_INSTALL_TIMEOUT_S: int = 300
+EXEC_TEST_TIMEOUT_S: int = 180
+EXEC_MAX_CONCURRENT: int = 2
+
 # ── Sandbox image ──────────────────────────────────────────────────────────────
 SANDBOX_IMAGE: str = os.getenv("SANDBOX_IMAGE", "medusa-optilearn:latest")
 SANDBOX_MEM_LIMIT: str = "512m"
