@@ -60,6 +60,10 @@ def parse_github_location(url: str) -> tuple[str, str, str | None, str | None]:
     Raises MedusaError(422) on invalid URLs.
     """
     url = url.strip().rstrip("/")
+    # Accept a bare "github.com/owner/repo" by assuming https; an explicit
+    # "http://" is left alone so it still fails the https-only check below.
+    if not url.startswith(("https://", "http://")):
+        url = f"https://{url}"
 
     ref: str | None = None
     subdir: str | None = None
