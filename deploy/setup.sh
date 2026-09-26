@@ -40,6 +40,17 @@ if ! grep -q '^ALLOWED_ORIGIN=' /etc/medusa/env; then
 fi
 chown -R medusa:medusa "$APP"
 
+if grep -q '^BOB_MODE=live' /etc/medusa/env; then
+  echo "==> bob shell"
+  if ! command -v bob >/dev/null; then
+    installer=$(mktemp)
+    curl -fsSL https://bob.ibm.com/download/bobshell.sh -o "$installer"
+    bash "$installer" --pm npm
+    rm -f "$installer"
+  fi
+  bob --version | head -1
+fi
+
 echo "==> sandbox image"
 docker build -q -t medusa-optilearn:latest "$APP/sandbox/optilearn"
 

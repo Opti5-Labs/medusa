@@ -6,12 +6,17 @@ Change limits here, nowhere else.
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, find_dotenv, load_dotenv
 
 # Load backend/.env (or the nearest .env up the tree) so that os.getenv picks
 # up local overrides. This is a no-op when the file is absent (deployed env
 # vars come from the systemd unit / shell environment instead).
 load_dotenv()
+# load_dotenv never overrides an existing variable, even an empty one. Fill
+# variables that are set but empty from .env so an empty export can't hide a key.
+for _name, _value in dotenv_values(find_dotenv()).items():
+    if _value and not os.environ.get(_name):
+        os.environ[_name] = _value
 
 
 def _env(*names: str, default: str = "") -> str:
@@ -119,7 +124,18 @@ if GRANITE_MODEL_ID in BANNED_MODEL_IDS or GRANITE_MODEL_ID.split("/")[-1] in {
 GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
 # ── Bob ────────────────────────────────────────────────────────────────────────
-BOB_MODE: str = os.getenv("BOB_MODE", "replay")  # "replay" | "live"
+# live   : run Bob Shell (`bob run`) as an investigator, needs BOB_API_KEY (backend only)
+# replay : replay a recorded Bob session from golden/optilearn when one exists
+# off    : never use Bob
+BOB_MODE: str = os.getenv("BOB_MODE", "live").strip().lower()
+BOB_API_KEY: str = os.getenv("BOB_API_KEY", "").strip()  # never sent to the frontend
+BOB_BINARY: str = os.getenv("BOB_BINARY", "bob")
+BOB_MAX_COST: float = float(
+    os.getenv("BOB_MAX_COST", "0.25")
+)  # Bobcoins per investigation
+BOB_MAX_TURNS: int = int(os.getenv("BOB_MAX_TURNS", "6"))
+BOB_TIMEOUT_S: int = int(os.getenv("BOB_TIMEOUT_S", "180"))
+BOB_MAX_CONCURRENT: int = 2
 BOB_REPLAY_DELAY_S: float = 0.35  # pacing between replayed events
 
 # ── In-memory store TTL ────────────────────────────────────────────────────────

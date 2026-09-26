@@ -70,6 +70,8 @@ class ReproRun:
     attempt: ReproAttempt
     channel: EventChannel
     baseline: Any = None  # SandboxResult on the original code (sandboxed mode)
+    evidence: str | None = None  # sandbox runtime evidence given to investigators
+    investigations: list = field(default_factory=list)  # InvestigatorResult per agent
     task: asyncio.Task | None = None
     created_at: float = field(default_factory=time.monotonic)
 

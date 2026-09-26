@@ -2,10 +2,10 @@
 Reproduce pipeline.
 
 sandboxed (OptiLearn demo):
-    investigation (recorded Bob run, else Granite) → reproducer on the original
-    code in the sandbox → reproduced | not_reproducible
+    reproducer on the original code in the sandbox → reproduced | not_reproducible
+    → Bob and Granite investigate the observed failure independently, in parallel
 reasoning (general repos):
-    one Granite diagnosis over the relevant files → plausible + confidence
+    Bob and Granite read the relevant files independently → plausible + confidence
 
 Every run ends with a `done` event carrying the final ReproAttempt. Any failure
 ends in a visible `error` event and status "error".
@@ -18,9 +18,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from app.agents import bob
-from app.agents.granite import GraniteError
-from app.agents.investigators import diagnose_general, investigate_demo
+from app.agents import panel
 from app.demo import optilearn
 from app.models.contracts import Issue, ReproAttempt
 from app.pipelines.context import select_files
@@ -90,7 +88,7 @@ async def run_baseline(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _runtime_evidence(lines: list[str]) -> str:
+def runtime_evidence(lines: list[str]) -> str:
     """The failing checks with their assertion output, plus the reproducer's source."""
     failing: list[str] = []
     keep = False
@@ -109,31 +107,16 @@ def _runtime_evidence(lines: list[str]) -> str:
     )
 
 
-async def _run_investigators(
-    run: ReproRun, issue: Issue, evidence: str | None
-) -> str | None:
-    """Granite investigation; returns the root cause, or None if unavailable."""
-    try:
-        synthesis = await investigate_demo(
-            issue, optilearn.context_files(), run.channel, evidence
-        )
-    except GraniteError as exc:
-        run.attempt.investigator_source = "unavailable"
-        await run.channel.emit("medusa", "warn", f"Investigators unavailable ({exc}).")
-        return None
-    run.attempt.investigator_source = "granite"
-    return synthesis.root_cause
+def _record_investigations(run: ReproRun, results) -> str | None:
+    """Store every investigator's result on the run; return the combined diagnosis."""
+    run.investigations = results
+    run.attempt.investigators = [r.report() for r in results]
+    run.attempt.investigator_source = panel.source_of(results)
+    return panel.combined_root_cause(results)
 
 
 async def _run_sandboxed(run: ReproRun, issue: Issue) -> None:
     ch, attempt = run.channel, run.attempt
-    root_cause: str | None = None
-
-    # A recorded Bob session is replayed first, as it was captured.
-    replayed = await bob.replay_investigation(ch)
-    if replayed:
-        attempt.investigator_source = "bob_replay"
-        root_cause = replayed.root_cause
 
     if not await asyncio.to_thread(docker_available):
         attempt.status = "error"
@@ -171,10 +154,12 @@ async def _run_sandboxed(run: ReproRun, issue: Issue) -> None:
         f"{result.suite.passed}/{result.suite.total} other checks pass.",
     )
 
-    # Without a recorded run, Granite diagnoses the failure the sandbox just observed.
-    if not replayed:
-        root_cause = await _run_investigators(run, issue, _runtime_evidence(captured))
-
+    # Bob and Granite diagnose the failure the sandbox just observed, independently.
+    run.evidence = runtime_evidence(captured)
+    results = await panel.investigate_demo_panel(
+        issue, optilearn.context_files(), run.evidence, optilearn.TARGET_FUNCTION, ch
+    )
+    root_cause = _record_investigations(run, results)
     attempt.status = "reproduced"
     attempt.root_cause = root_cause or issue.description
 
@@ -197,12 +182,16 @@ async def _run_reasoning(run: ReproRun, record: ScanRecord, issue: Issue) -> Non
             "medusa", "error", "Could not find source files related to this issue."
         )
         return
-    try:
-        diagnosis = await diagnose_general(issue, files, ch)
-    except GraniteError as exc:
+    results = await panel.investigate_general_panel(issue, files, ch)
+    root_cause = _record_investigations(run, results)
+    if root_cause is None:
         attempt.status = "error"
-        await ch.emit("granite", "error", str(exc))
+        await ch.emit(
+            "medusa",
+            "error",
+            "No investigator could analyse this issue (see the reasons above).",
+        )
         return
     attempt.status = "plausible"
-    attempt.root_cause = diagnosis.root_cause
-    attempt.confidence = round(diagnosis.confidence, 2)
+    attempt.root_cause = root_cause
+    attempt.confidence = panel.reported_confidence(results) or 0.0
