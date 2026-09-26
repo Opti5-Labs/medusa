@@ -245,6 +245,9 @@ function Investigate() {
   const visible = session?.candidates.filter((c) => !state.hidden.includes(c.candidate_id)) ?? [];
   const recommendedId = state.debug.recommendation?.candidate_id;
   const reproduced = state.repro.attempt?.status === "reproduced";
+  // A general repo can still run: when the server allows it, reproduce upgrades
+  // to a sandboxed result and the race tests real patches.
+  const executed = state.repro.attempt?.mode === "sandboxed" || session?.mode === "sandboxed";
 
   return (
     <div className="page">
@@ -254,7 +257,9 @@ function Investigate() {
           <Badge tone={PRIORITY_TONE[issue.priority]}>{issue.priority}</Badge>
           <Badge>{issue.source === "github_issue" ? "GitHub Issue" : "Code scan"}</Badge>
           {issue.category && <Badge tone="blue">{issue.category}</Badge>}
-          <Badge tone={mode === "sandboxed" ? "green" : "amber"}>{mode === "sandboxed" ? "Sandboxed" : "Analysis only"}</Badge>
+          <Badge tone={mode === "sandboxed" || executed ? "green" : "amber"}>
+            {mode === "sandboxed" || executed ? "Sandboxed" : "Analysis only"}
+          </Badge>
         </div>
         <h2 className="title-1">{issue.title}</h2>
         <p className="page-lede">{issue.description}</p>
@@ -267,11 +272,11 @@ function Investigate() {
         )}
       </header>
 
-      {mode === "reasoning" && (
+      {mode === "reasoning" && !executed && (
         <div className="notice">
           <p>
-            <strong>Analysis only.</strong> This repository&apos;s code is read as text and never executed. Results
-            are model reasoning, not reproductions, and patches are not verified.
+            <strong>Analysis only.</strong> Unless a run below says it ran in the sandbox, this repository&apos;s
+            code is read as text: results are model reasoning, not reproductions, and patches are not verified.
           </p>
         </div>
       )}
@@ -346,7 +351,7 @@ function Investigate() {
                 recommended={state.debug.done && c.candidate_id === recommendedId}
                 finished={state.debug.done}
                 downloadUrl={
-                  session.mode === "sandboxed" && c.sandbox_status === "passed"
+                  mode === "sandboxed" && c.sandbox_status === "passed"
                     ? getDebugDownloadUrl(session.session_id, c.candidate_id)
                     : null
                 }

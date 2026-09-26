@@ -7,7 +7,12 @@ sandboxed (OptiLearn demo):
     candidates only for slots neither filled → each
     candidate spliced into its own copy and tested in its own sandbox, in
     parallel → deterministic verification → recommendation
-reasoning (general repos):
+tested (general Python repos, when execution is enabled and reproduce
+confirmed the bug with a failing test):
+    Bob's proposed diffs, then Granite's → each applied and run in the gVisor
+    sandbox with the reproducer and the repo's own suite → the same
+    deterministic verification and recommendation
+reasoning (general repos otherwise):
     Bob's proposed diffs, then Granite's, shown but never applied or run
 
 A candidate that fails never stops the others. The run ends with a `done`
@@ -31,8 +36,9 @@ from app.models.contracts import DebugDone, DebugSession, FixAttempt, Issue
 from app.pipelines import verify
 from app.pipelines.context import select_files_for
 from app.pipelines.repro import is_sandboxed, run_baseline, runtime_evidence
+from app.sandbox import pyexec
 from app.sandbox.runner import SandboxResult, run_checks, sandbox_unavailable_reason
-from app.store import DebugRun, RunStore, ScanRecord
+from app.store import DebugRun, ReproRun, RunStore, ScanRecord
 from app.streaming import EventChannel
 
 log = logging.getLogger(__name__)
@@ -41,7 +47,9 @@ log = logging.getLogger(__name__)
 async def start_debug(
     store: RunStore, record: ScanRecord, issue: Issue, n_candidates: int
 ) -> DebugRun:
-    sandboxed = is_sandboxed(record, issue)
+    demo = is_sandboxed(record, issue)
+    exec_repro = None if demo else await _exec_reproduction(store, issue)
+    sandboxed = demo or exec_repro is not None
     candidates = [
         FixAttempt(
             candidate_id=f"c{i + 1}",
@@ -60,8 +68,10 @@ async def start_debug(
         channel=EventChannel(),
     )
     store.add_debug(run)
-    if sandboxed:
+    if demo:
         pipeline = _run_sandboxed(store, run, issue)
+    elif exec_repro is not None:
+        pipeline = _run_exec(store, run, record, issue, exec_repro)
     else:
         pipeline = _run_reasoning(store, run, record, issue)
     run.task = asyncio.create_task(_guarded(run, pipeline))
@@ -441,22 +451,18 @@ async def _run_sandboxed(store: RunStore, run: DebugRun, issue: Issue) -> None:
 # ── Reasoning (general repos) ─────────────────────────────────────────────────
 
 
-async def _run_reasoning(
-    store: RunStore, run: DebugRun, record: ScanRecord, issue: Issue
+async def _propose(
+    store: RunStore,
+    run: DebugRun,
+    issue: Issue,
+    files: dict[str, str],
+    *,
+    tested: bool,
 ) -> None:
+    """Fill each candidate with a proposed diff: Bob's first, Granite's for the rest."""
     ch = run.channel
-    await ch.emit(
-        "medusa", "info", "Analysis only: patches are proposed, never applied or run."
-    )
-    files = select_files_for(
-        record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)
-    )
-    if not files:
-        await ch.emit(
-            "medusa", "error", "Could not find source files related to this issue."
-        )
-        return
     root_cause = _own_root_cause(store, issue, "granite")
+    then = "queued for the sandbox" if tested else "not tested"
 
     bob_result = _investigation(store, issue, "bob")
     if bob_result is None:
@@ -477,16 +483,16 @@ async def _run_reasoning(
         )
         candidate.patch_stats = optilearn.patch_stats(fix.patch or "")
         await ch.emit(
-            f"candidate:{candidate.candidate_id}",
-            "result",
-            "Proposed by Bob (not tested)",
+            f"candidate:{candidate.candidate_id}", "result", f"Proposed by Bob ({then})"
         )
 
     async def one(candidate: FixAttempt) -> None:
         tag = f"candidate:{candidate.candidate_id}"
         await ch.emit(tag, "info", f"Proposing: {candidate.approach}")
         try:
-            cand = await diff_candidate(issue, root_cause, files, candidate.approach)
+            cand = await diff_candidate(
+                issue, root_cause, files, candidate.approach, tested=tested
+            )
         except GraniteError as exc:
             candidate.error = str(exc)
             await ch.emit(tag, "error", str(exc))
@@ -497,11 +503,153 @@ async def _run_reasoning(
             "granite",
         )
         candidate.patch_stats = optilearn.patch_stats(cand.patch)
-        await ch.emit(tag, "result", f"Proposed (not tested): {cand.explanation}")
+        await ch.emit(tag, "result", f"Proposed ({then}): {cand.explanation}")
 
     await asyncio.gather(*(one(c) for c in run.session.candidates[n_bob:]))
+
+
+async def _run_reasoning(
+    store: RunStore, run: DebugRun, record: ScanRecord, issue: Issue
+) -> None:
+    ch = run.channel
+    await ch.emit(
+        "medusa", "info", "Analysis only: patches are proposed, never applied or run."
+    )
+    files = select_files_for(
+        record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)
+    )
+    if not files:
+        await ch.emit(
+            "medusa", "error", "Could not find source files related to this issue."
+        )
+        return
+    await _propose(store, run, issue, files, tested=False)
     run.recommendation = verify.recommend_unverified(run.session.candidates)
     if run.recommendation:
         await ch.emit("recommendation", "result", run.recommendation.reason)
     else:
         await ch.emit("recommendation", "warn", "No patch could be proposed.")
+
+
+# ── Tested (general Python repos, ARBITRARY_EXECUTION) ────────────────────────
+
+
+async def _exec_reproduction(store: RunStore, issue: Issue) -> ReproRun | None:
+    """The finished reproduce run whose failing test gates this race, if any."""
+    repro = store.latest_repro_for(issue.id)
+    if (
+        repro is None
+        or repro.attempt.status != "reproduced"
+        or repro.reproducer_test is None
+        or repro.exec_baseline is None
+    ):
+        return None
+    if await asyncio.to_thread(pyexec.unavailable_reason) is not None:
+        return None
+    return repro
+
+
+async def _race_exec(
+    run: DebugRun,
+    candidate: FixAttempt,
+    env: pyexec.ExecEnv,
+    repro: ReproRun,
+) -> None:
+    """Apply one proposed diff in the sandbox and verify it against the original run."""
+    ch, tag = run.channel, f"candidate:{candidate.candidate_id}"
+
+    async def on_line(line: str) -> None:
+        await ch.emit(tag, "info", line)
+
+    await ch.emit(tag, "info", "Applying the patch and running the tests")
+    result = await pyexec.run_tests(
+        env, on_line, patch=candidate.patch, repro_test=repro.reproducer_test
+    )
+    if not result.ok:
+        candidate.sandbox_status, candidate.error = "failed", result.error
+        await ch.emit(tag, "error", result.error or "Sandbox run failed.")
+        return
+    if result.patch_applied is False:
+        candidate.sandbox_status = "failed"
+        candidate.error = f"Patch does not apply: {result.patch_error or 'rejected'}"
+        await ch.emit(tag, "error", candidate.error)
+        return
+
+    candidate.test_results = r = verify.evaluate_exec(repro.exec_baseline, result)
+    if verify.is_passing(r):
+        candidate.sandbox_status, candidate.error = "passed", None
+        await ch.emit(
+            tag,
+            "result",
+            f"PASSED: reproducer fixed, {r.passed}/{r.total} tests pass, no regressions",
+        )
+        return
+    why = []
+    if not r.reproducer_fixed:
+        why.append("reproducer still fails")
+    if r.regressions:
+        why.append(f"{len(r.regressions)} regression(s): {', '.join(r.regressions)}")
+    candidate.sandbox_status, candidate.error = "failed", "; ".join(why)
+    await ch.emit(tag, "result", f"FAILED: {candidate.error}")
+
+
+async def _run_exec(
+    store: RunStore,
+    run: DebugRun,
+    record: ScanRecord,
+    issue: Issue,
+    repro: ReproRun,
+) -> None:
+    ch = run.channel
+    await ch.emit(
+        "gate",
+        "info",
+        "Bug gate open: the reproducer test from the reproduce run fails on the original code",
+    )
+    files = select_files_for(
+        record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)
+    )
+    if not files:
+        await ch.emit(
+            "medusa", "error", "Could not find source files related to this issue."
+        )
+        return
+    await _propose(store, run, issue, files, tested=True)
+    proposed = [c for c in run.session.candidates if c.patch]
+    for c in run.session.candidates:
+        if not c.patch:
+            c.sandbox_status = "failed"
+            c.error = c.error or "No patch could be proposed."
+    if not proposed:
+        await ch.emit("recommendation", "warn", "No patch could be proposed.")
+        return
+
+    async def on_line(line: str) -> None:
+        await ch.emit("sandbox", "info", line)
+
+    prep = await pyexec.prepare(record.root, on_line)
+    if prep.env is None:
+        await ch.emit("sandbox", "error", f"Could not run the repository: {prep.error}")
+        for c in proposed:
+            c.sandbox_status, c.error = "failed", "Sandbox unavailable."
+        return
+    try:
+        await ch.emit(
+            "medusa",
+            "info",
+            f"Debug race: testing {len(proposed)} patch(es) against the reproducer "
+            "and the repository's own tests",
+        )
+        await asyncio.gather(*(_race_exec(run, c, prep.env, repro) for c in proposed))
+    finally:
+        await pyexec.release(prep.env)
+
+    run.recommendation = verify.recommend_verified(run.session.candidates)
+    if run.recommendation:
+        await ch.emit("recommendation", "result", run.recommendation.reason)
+    else:
+        await ch.emit(
+            "recommendation",
+            "warn",
+            "No patch passed verification, so none is recommended.",
+        )

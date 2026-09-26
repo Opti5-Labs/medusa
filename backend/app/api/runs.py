@@ -146,6 +146,11 @@ async def download(session_id: str, candidate_id: str) -> Response:
             409, "Only candidates that passed verification can be downloaded."
         )
     workdir = run.workdirs.get(candidate_id)
+    if not run.workdirs:
+        raise MedusaError(
+            409,
+            "A zip is only available for the OptiLearn demo. Download the .patch instead.",
+        )
     if workdir is None or not workdir.exists():
         raise MedusaError(
             410, "This fix is no longer available. Please run debug again."
@@ -176,7 +181,10 @@ def _patch_header(run, candidate) -> str:
             "NOT executed or tested: this patch was proposed by reading the code only. "
             "Review it and run your tests before applying."
         )
-    lines.append("Apply from the repository root with: git apply <this file>")
+    lines.append(
+        "Apply from the repository root with: git apply <this file> "
+        "(if git refuses it, patch -p1 < <this file> is more forgiving)"
+    )
     return "".join(f"# {line}\n" for line in lines) + "\n"
 
 

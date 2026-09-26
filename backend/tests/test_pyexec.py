@@ -150,7 +150,11 @@ _FIXTURE_REPO = {
         '[build-system]\nrequires = ["setuptools>=61"]\nbuild-backend = "setuptools.build_meta"\n\n'
         '[dependency-groups]\ntests = ["pytest"]\n'
     ),
-    "src/calc/__init__.py": "def add(a, b):\n    return a - b\n",
+    # sub() after add() means _FIX has no trailing context away from the end
+    # of the file, the shape model-written hunks often have.
+    "src/calc/__init__.py": (
+        "def add(a, b):\n    return a - b\n\n\ndef sub(a, b):\n    return a - b\n"
+    ),
     "tests/test_calc.py": "from calc import add\n\ndef test_zero():\n    assert add(0, 0) == 0\n",
 }
 _FIX = (

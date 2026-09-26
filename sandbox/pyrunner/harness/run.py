@@ -10,7 +10,8 @@ running the repo's tests.
     run.py test         /code (ro) + /deps (ro) + /inputs (ro) -> test results
 
 Inputs for `test` (all optional) in /inputs:
-    patch.diff              unified diff applied with `git apply` before tests run
+    patch.diff              unified diff applied before tests run (`git apply`,
+                            then hunks.py for model-written diffs git refuses)
     test_medusa_repro.py    reproducer test added to the repo's tests
     select.txt              pytest node ids / paths to run (default: whole suite)
 
@@ -25,6 +26,8 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+
+import hunks
 
 CODE = Path("/code")
 DEPS = Path("/deps")
@@ -166,13 +169,22 @@ def test() -> int:
 
     patch = INPUTS / "patch.diff"
     if patch.is_file():
+        # Strict first; model-written hunks that git refuses (wrong counts,
+        # stale line numbers, missing trailing context) get the forgiving
+        # applier, which still needs the old lines to match exactly.
         proc = subprocess.run(
             ["git", "apply", "--whitespace=nowarn", str(patch)],
             cwd=repo, capture_output=True, text=True, timeout=60, check=False,
         )
         patch_applied = proc.returncode == 0
         if not patch_applied:
-            patch_error = (proc.stderr or proc.stdout).strip()[-500:]
+            try:
+                hunks.apply(repo, patch.read_text())
+                patch_applied = True
+                print("PATCH  git apply refused it; applied by matching hunks", flush=True)
+            except hunks.PatchError as exc:
+                patch_error = str(exc)[:500]
+        if not patch_applied:
             print("PATCH  does not apply: " + patch_error, flush=True)
             _emit("MEDUSA_RESULT", {"patch_applied": False, "patch_error": patch_error})
             return 0
