@@ -150,3 +150,186 @@ async def test_non_retryable_failures_keep_their_type(monkeypatch):
     _install(monkeypatch, [(403, quota)])
     with pytest.raises(granite.GraniteUnavailable):
         await granite.chat_json("s", "u", _Answer)
+
+
+def _sse(*pieces: str, done: bool = True) -> str:
+    lines = [
+        "data: " + json.dumps({"choices": [{"delta": {"content": p}}]}) for p in pieces
+    ]
+    if done:
+        lines.append("data: [DONE]")
+    return "\n\n".join(lines) + "\n\n"
+
+
+class _DyingStream(httpx.AsyncByteStream):
+    def __init__(self, first: str) -> None:
+        self._first = first
+
+    async def __aiter__(self):
+        yield self._first.encode()
+        raise httpx.ReadError("connection lost")
+
+
+def _install_stream(monkeypatch, stream_replies: list, chat_replies=()):
+    """Serve IAM tokens, then *stream_replies* for chat_stream calls and
+    *chat_replies* for plain /text/chat calls. A stream reply is (status, body)
+    where body is SSE text, a JSON string for errors, or an httpx byte stream."""
+    calls: list[str] = []
+    streams, chats = list(stream_replies), list(chat_replies)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if "identity/token" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "test-access-token-0123456789",
+                    "expires_in": 3600,
+                },
+            )
+        bodies.append(json.loads(request.content))
+        if request.url.path.endswith("/text/chat_stream"):
+            status, body = streams.pop(0)
+            if isinstance(body, str) and status == 200:
+                return httpx.Response(
+                    200, text=body, headers={"content-type": "text/event-stream"}
+                )
+            if isinstance(body, str):
+                return httpx.Response(status, json=json.loads(body) if body else {})
+            return httpx.Response(status, stream=body)
+        status, content = chats.pop(0)
+        return httpx.Response(
+            status, json={"choices": [{"message": {"content": content}}]}
+        )
+
+    real_client = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(granite.httpx, "AsyncClient", factory)
+    monkeypatch.setattr("app.config.WATSONX_API_KEY", "test-key")
+    monkeypatch.setattr("app.config.WATSONX_PROJECT_ID", "test-project")
+    monkeypatch.setattr("app.config.ASK_STREAMING", True)
+    monkeypatch.setattr(granite, "_token", None)
+    monkeypatch.setattr(granite, "_cache", granite.OrderedDict())
+    return calls, bodies
+
+
+async def _collect(*args, **kwargs) -> list[str]:
+    return [p async for p in granite.chat_text_stream(*args, **kwargs)]
+
+
+async def test_chat_text_returns_text_without_response_format(monkeypatch):
+    bodies: list[dict] = []
+    calls = _install(monkeypatch, [(200, "plain answer")])
+    real_factory = granite.httpx.AsyncClient
+
+    def spying(*args, **kwargs):
+        client = real_factory(*args, **kwargs)
+        original = client._transport.handle_async_request
+
+        async def handle(request):
+            if request.url.path.endswith("/text/chat"):
+                bodies.append(json.loads(request.content))
+            return await original(request)
+
+        client._transport.handle_async_request = handle
+        return client
+
+    monkeypatch.setattr(granite.httpx, "AsyncClient", spying)
+    assert await granite.chat_text("s", "u") == "plain answer"
+    assert len(bodies) == 1
+    assert "response_format" not in bodies[0]
+    assert bodies[0]["temperature"] == 0
+    assert sum(1 for c in calls if c.endswith("/text/chat")) == 1
+
+
+async def test_chat_text_is_answered_from_cache(monkeypatch):
+    calls = _install(monkeypatch, [(200, "once")])
+    assert await granite.chat_text("s", "u") == "once"
+    assert await granite.chat_text("s", "u") == "once"
+    assert sum(1 for c in calls if c.endswith("/text/chat")) == 1
+
+
+async def test_chat_text_empty_answer_is_an_error(monkeypatch):
+    _install(monkeypatch, [(200, "  "), (200, "")])
+    with pytest.raises(granite.GraniteError, match="empty answer"):
+        await granite.chat_text("s", "u")
+
+
+async def test_stream_yields_pieces_in_order(monkeypatch):
+    calls, bodies = _install_stream(monkeypatch, [(200, _sse("Hel", "lo ", "world"))])
+    assert await _collect("s", "u") == ["Hel", "lo ", "world"]
+    assert "response_format" not in bodies[0]
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 1
+
+
+async def test_stream_result_is_cached(monkeypatch):
+    calls, _ = _install_stream(monkeypatch, [(200, _sse("a", "b"))])
+    assert await _collect("s", "u") == ["a", "b"]
+    assert await _collect("s", "u") == ["ab"]
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 1
+
+
+async def test_stream_rate_limit_waits_and_retries(monkeypatch):
+    monkeypatch.setattr(granite, "_RATE_LIMIT_WAITS_S", (0, 0))
+    calls, _ = _install_stream(monkeypatch, [(429, ""), (429, ""), (200, _sse("fine"))])
+    assert await _collect("s", "u") == ["fine"]
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 3
+
+
+async def test_stream_quota_failure_is_not_retried(monkeypatch):
+    quota = json.dumps({"errors": [{"code": "token_quota_reached", "message": "x"}]})
+    calls, _ = _install_stream(monkeypatch, [(403, quota)])
+    with pytest.raises(granite.GraniteUnavailable, match="token quota"):
+        await _collect("s", "u")
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 1
+
+
+async def test_stream_404_falls_back_to_plain_chat(monkeypatch):
+    calls, _ = _install_stream(monkeypatch, [(404, "")], [(200, "whole answer")])
+    assert await _collect("s", "u") == ["whole answer"]
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 1
+    assert sum(1 for c in calls if c.endswith("/text/chat")) == 1
+
+
+async def test_stream_cut_off_after_first_piece_is_not_retried(monkeypatch):
+    calls, _ = _install_stream(
+        monkeypatch, [(200, _DyingStream(_sse("Hi", done=False)))]
+    )
+    got: list[str] = []
+    with pytest.raises(granite.GraniteError, match="cut off"):
+        async for piece in granite.chat_text_stream("s", "u"):
+            got.append(piece)
+    assert got == ["Hi"]
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 1
+
+
+async def test_stream_network_error_before_first_piece_is_retried(monkeypatch):
+    calls, _ = _install_stream(
+        monkeypatch, [(200, _DyingStream("")), (200, _sse("ok"))]
+    )
+    assert await _collect("s", "u") == ["ok"]
+    assert sum(1 for c in calls if c.endswith("/text/chat_stream")) == 2
+
+
+async def test_streaming_off_makes_one_plain_call(monkeypatch):
+    calls, _ = _install_stream(monkeypatch, [], [(200, "whole")])
+    monkeypatch.setattr("app.config.ASK_STREAMING", False)
+    assert await _collect("s", "u") == ["whole"]
+    assert sum(1 for c in calls if c.endswith("/text/chat")) == 1
+    assert not any(c.endswith("/text/chat_stream") for c in calls)
+
+
+async def test_stream_errors_never_contain_the_key(monkeypatch):
+    key = "".join(["sk", "-", "x" * 20])
+    body = json.dumps({"errors": [{"code": "boom", "message": "bad"}]})
+    _install_stream(monkeypatch, [(500, body), (500, body)])
+    monkeypatch.setattr("app.config.WATSONX_API_KEY", key)
+    with pytest.raises(granite.GraniteError) as excinfo:
+        await _collect("s", "u")
+    assert key not in str(excinfo.value)
+    assert key not in granite._scrub(f"failed with {key}")

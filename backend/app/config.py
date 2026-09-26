@@ -69,6 +69,8 @@ SCAN_MAX_ISSUES: int = 25  # cap on scan issues shown, highest priority first
 RATE_SCANS_PER_WINDOW: int = 5
 # "Reproduce and Debug" is two runs, so this allows three full flows per window.
 RATE_REPRO_DEBUG_PER_WINDOW: int = 6
+RATE_ASK_PER_WINDOW: int = 6
+RATE_ASK_BOB_PER_WINDOW: int = 3
 RATE_WINDOW_SECONDS: int = 600  # 10 minutes
 
 # ── Timeouts ───────────────────────────────────────────────────────────────────
@@ -137,6 +139,26 @@ BOB_MAX_TURNS: int = int(os.getenv("BOB_MAX_TURNS", "6"))
 BOB_TIMEOUT_S: int = int(os.getenv("BOB_TIMEOUT_S", "180"))
 BOB_MAX_CONCURRENT: int = 2
 BOB_REPLAY_DELAY_S: float = 0.35  # pacing between replayed events
+
+# ── Ask (Q&A) ──────────────────────────────────────────────────────────────────
+ASK_ENABLED: bool = _env_bool("ASK_ENABLED", True)
+# Off until streaming is verified against the real watsonx API.
+ASK_STREAMING: bool = _env_bool("ASK_STREAMING", False)
+ASK_BOB_ENABLED: bool = _env_bool("ASK_BOB_ENABLED", True)
+ASK_MAX_QUESTION_CHARS: int = 1000
+ASK_MAX_HISTORY_TURNS: int = 4
+ASK_HISTORY_ANSWER_CHARS: int = 600
+ASK_MAX_FILES: int = 6
+ASK_MAX_CONTEXT_CHARS: int = 16_000
+ASK_BOB_MAX_PROMPT_CHARS: int = 20_000
+ASK_MAX_REPO_MAP_FILES: int = 150
+ASK_MAX_INDEX_FILES: int = 3000
+ASK_MAX_SEARCH_BYTES: int = 20_000_000
+ASK_MAX_ANSWER_TOKENS: int = 900
+ASK_TIMEOUT_S: int = 60
+# After Granite reports it is unavailable (quota used up, not authorised),
+# questions go straight to IBM Bob for this long before Granite is tried again.
+ASK_GRANITE_COOLDOWN_S: int = 300
 
 # ── In-memory store TTL ────────────────────────────────────────────────────────
 RUN_TTL_SECONDS: int = 1800  # 30 minutes
