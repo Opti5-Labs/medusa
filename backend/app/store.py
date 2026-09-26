@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app import config
 from app.config import RUN_TTL_SECONDS
 from app.models.contracts import (
     AskAnswer,
@@ -43,9 +44,6 @@ _MAX_STORED_SCANS = 200
 _MAX_DEMO_SCANS = 1000
 # Cap on live repro/debug runs across all users.
 _MAX_RUNS = 200
-_MAX_ASK_RUNS = 300
-_FINISHED_ASK_KEEP_SECONDS = 60
-_MAX_HISTORY = 20
 
 
 class StoreFullError(RuntimeError):
@@ -67,7 +65,7 @@ class ScanRecord:
 
     def remember(self, question: str, answer: str) -> None:
         self.history.append((question, answer))
-        del self.history[:-_MAX_HISTORY]
+        del self.history[: -config.ASK_MAX_REMEMBERED_TURNS]
 
 
 # Kept for callers/tests that use the old name.
@@ -238,14 +236,14 @@ class RunStore:
 
     def add_ask(self, run: AskRun) -> None:
         # a finished answer only needs to stay long enough for a browser to replay it
-        stale = time.monotonic() - _FINISHED_ASK_KEEP_SECONDS
+        stale = time.monotonic() - config.ASK_FINISHED_KEEP_SECONDS
         for ask_id in [
             k
             for k, r in self.ask_runs.items()
             if r.channel.closed and r.created_at < stale
         ]:
             del self.ask_runs[ask_id]
-        if len(self.ask_runs) >= _MAX_ASK_RUNS:
+        if len(self.ask_runs) >= config.ASK_MAX_RUNS:
             raise StoreFullError(
                 "Server is busy answering too many questions. Please try again shortly."
             )

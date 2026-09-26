@@ -155,6 +155,29 @@ ASK_MAX_INDEX_FILES: int = 3000
 ASK_MAX_SEARCH_BYTES: int = 20_000_000
 ASK_MAX_ANSWER_TOKENS: int = 900
 ASK_TIMEOUT_S: int = 60
+ASK_MAX_READ_BYTES: int = 60_000  # bytes read from one file
+ASK_FALLBACK_FILES: int = 3  # README/entry-point files used when nothing matches
+ASK_WHOLE_FILE_LINES: int = 300  # files up to this long are sent whole
+ASK_WINDOW_LINES: int = 30  # lines of context either side of a keyword hit
+ASK_MAX_WINDOWS: int = 4  # keyword-hit windows taken from one long file
+ASK_HEAD_LINES: int = 120  # lines taken from the top when a long file has no hit
+ASK_MAX_KNOWN_ISSUES: int = 25  # scan issues listed in the prompt
+ASK_ISSUE_DESCRIPTION_CHARS: int = 300
+ASK_WARNING_CHARS: int = 200
+ASK_MAX_WARNINGS: int = 3
+ASK_PROMPT_SLACK_CHARS: int = (
+    12_000  # room above ASK_MAX_CONTEXT_CHARS for the rest of the prompt
+)
+ASK_SANDBOX_EVIDENCE_CHARS: int = 4000
+ASK_PATCH_CHARS: int = 2500  # per candidate patch
+ASK_MAX_CANDIDATES: int = 4  # debug candidates listed in the prompt
+ASK_MAX_CITATIONS: int = 8
+ASK_STREAM_HOLD_BACK_CHARS: int = (
+    200  # streamed tail held back until it is checked for secrets
+)
+ASK_MAX_RUNS: int = 300  # live ask runs across all users
+ASK_FINISHED_KEEP_SECONDS: int = 60  # how long a finished ask run stays readable
+ASK_MAX_REMEMBERED_TURNS: int = 20  # question/answer turns stored per scan
 
 # ── In-memory store TTL ────────────────────────────────────────────────────────
 RUN_TTL_SECONDS: int = 1800  # 30 minutes

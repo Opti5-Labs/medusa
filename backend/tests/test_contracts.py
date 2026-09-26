@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app import config
 from app import store as store_mod
 from app.models.contracts import (
     AskAnswer,
@@ -150,7 +151,7 @@ async def test_store_sweeps_expired_ask_runs_and_cancels_their_task():
 
 def test_add_ask_past_the_cap_raises():
     store = RunStore()
-    for i in range(store_mod._MAX_ASK_RUNS):
+    for i in range(config.ASK_MAX_RUNS):
         store.add_ask(_ask_run(f"a{i}"))
     with pytest.raises(StoreFullError):
         store.add_ask(_ask_run("one-too-many"))

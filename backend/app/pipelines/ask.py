@@ -35,7 +35,6 @@ from app.streaming import EventChannel
 
 log = logging.getLogger(__name__)
 
-_MAX_READ_BYTES = 60_000
 _DEMO_PREFIX = "optilearn/"
 _REDACTED = "[REDACTED]"
 
@@ -112,11 +111,6 @@ _LONG_WORD = 8
 _FALLBACK_STEMS = frozenset(
     {"main", "app", "index", "server", "cli", "manage", "__main__"}
 )
-_FALLBACK_MAX = 3
-_WHOLE_FILE_LINES = 300
-_WINDOW_LINES = 30
-_MAX_WINDOWS = 4
-_HEAD_LINES = 120
 
 
 class AskUnavailable(Exception):
@@ -174,7 +168,7 @@ def read_file(root: Path, prefix: str, display_path: str) -> str | None:
         return None
     try:
         with open(path, "rb") as fh:
-            return fh.read(_MAX_READ_BYTES).decode("utf-8", errors="replace")
+            return fh.read(config.ASK_MAX_READ_BYTES).decode("utf-8", errors="replace")
     except OSError:
         return None
 
@@ -281,7 +275,7 @@ def _fallback_paths(all_paths: list[str]) -> list[str]:
         (p for p in all_paths if base(p).split(".", 1)[0] in _FALLBACK_STEMS),
         key=key,
     )
-    return [*readmes, *entry][:_FALLBACK_MAX]
+    return [*readmes, *entry][: config.ASK_FALLBACK_FILES]
 
 
 def pick_files(
@@ -343,18 +337,21 @@ class Excerpt:
 def make_excerpts(picked: Picked, terms: set[str]) -> list[Excerpt]:
     lines = picked.text.splitlines()
     first = picked.start
-    if len(lines) <= _WHOLE_FILE_LINES:
+    if len(lines) <= config.ASK_WHOLE_FILE_LINES:
         return [Excerpt(picked.path, first, lines)]
 
     lowered = [line.lower() for line in lines]
     hits = [i for i, line in enumerate(lowered) if any(t in line for t in terms)]
-    hits = hits[:_MAX_WINDOWS]
+    hits = hits[: config.ASK_MAX_WINDOWS]
     if not hits:
-        return [Excerpt(picked.path, first, lines[:_HEAD_LINES])]
+        return [Excerpt(picked.path, first, lines[: config.ASK_HEAD_LINES])]
 
     spans: list[list[int]] = []
     for i in hits:
-        lo, hi = max(0, i - _WINDOW_LINES), min(len(lines) - 1, i + _WINDOW_LINES)
+        lo, hi = (
+            max(0, i - config.ASK_WINDOW_LINES),
+            min(len(lines) - 1, i + config.ASK_WINDOW_LINES),
+        )
         if spans and lo <= spans[-1][1]:
             spans[-1][1] = max(spans[-1][1], hi)
         else:
@@ -563,15 +560,6 @@ Rules:
 6. Never output secrets. Write [REDACTED] instead.
 7. The repository map lists every file, but you only see the excerpts provided. Say so when the relevant file was not among them."""
 
-_MAX_KNOWN_ISSUES = 25
-_ISSUE_DESCRIPTION_CHARS = 300
-_WARNING_CHARS = 200
-_MAX_WARNINGS = 3
-_PROMPT_SLACK_CHARS = 12_000
-_SANDBOX_EVIDENCE_CHARS = 4000
-_PATCH_CHARS = 2500
-_MAX_CANDIDATES = 4
-_MAX_CITATIONS = 8
 _TRUNCATED_NOTE = "[more files were left out to fit the size limit]"
 
 _OUR_TAG_RE = re.compile(
@@ -604,9 +592,9 @@ def _render_excerpt(excerpt: Excerpt) -> str:
 
 
 def _known_issues(record: ScanRecord, issue: Issue | None) -> str:
-    issues = record.result.issues[:_MAX_KNOWN_ISSUES]
+    issues = record.result.issues[: config.ASK_MAX_KNOWN_ISSUES]
     if issue is not None and all(i.id != issue.id for i in issues):
-        issues = [issue, *issues[: _MAX_KNOWN_ISSUES - 1]]
+        issues = [issue, *issues[: config.ASK_MAX_KNOWN_ISSUES - 1]]
     lines: list[str] = []
     for item in issues:
         where = item.file or "unknown file"
@@ -619,7 +607,7 @@ def _known_issues(record: ScanRecord, issue: Issue | None) -> str:
             where,
             item.function,
             item.category,
-            item.description[:_ISSUE_DESCRIPTION_CHARS],
+            item.description[: config.ASK_ISSUE_DESCRIPTION_CHARS],
         ]
         lines.append("- " + " | ".join(p for p in parts if p))
     return "\n".join(lines) or "(none)"
@@ -635,7 +623,10 @@ def _scan_facts(record: ScanRecord) -> str:
             "analysed by the scan"
         ),
     ]
-    lines += [f"warning: {w[:_WARNING_CHARS]}" for w in result.warnings[:_MAX_WARNINGS]]
+    lines += [
+        f"warning: {w[: config.ASK_WARNING_CHARS]}"
+        for w in result.warnings[: config.ASK_MAX_WARNINGS]
+    ]
     return "\n".join(lines)
 
 
@@ -687,7 +678,7 @@ def build_user_prompt(
     sandbox_block: str | None,
     limit: int | None = None,
 ) -> str:
-    limit = limit or config.ASK_MAX_CONTEXT_CHARS + _PROMPT_SLACK_CHARS
+    limit = limit or config.ASK_MAX_CONTEXT_CHARS + config.ASK_PROMPT_SLACK_CHARS
     history_text = _history_text(history)
     sandbox = sandbox_block
     for drop in ("nothing", "history", "sandbox"):
@@ -720,7 +711,7 @@ def _debug_lines(store: RunStore, issue: Issue) -> list[str]:
     if not debug.channel.closed:
         return ["", "Debug: debug is still running."]
     lines = ["", "Debug candidates (each was run in the sandbox):"]
-    for cand in debug.session.candidates[:_MAX_CANDIDATES]:
+    for cand in debug.session.candidates[: config.ASK_MAX_CANDIDATES]:
         lines.append(
             f"- {cand.candidate_id} | origin: {cand.origin or 'unknown'} | "
             f"approach: {cand.approach} | sandbox_status: {cand.sandbox_status}"
@@ -732,7 +723,7 @@ def _debug_lines(store: RunStore, issue: Issue) -> list[str]:
                 f"reproducer_fixed: {tr.reproducer_fixed}; regressions: {regressions}"
             )
         if cand.patch:
-            lines.append(f"  patch:\n{cand.patch[:_PATCH_CHARS]}")
+            lines.append(f"  patch:\n{cand.patch[: config.ASK_PATCH_CHARS]}")
     if (rec := debug.recommendation) is not None:
         lines.append(f"Recommendation: {rec.candidate_id}. {rec.reason}")
     return lines
@@ -765,7 +756,7 @@ def sandbox_block(store: RunStore, record: ScanRecord, issue: Issue) -> str | No
     if run.evidence:
         lines += [
             "Sandbox observation (what the sandbox actually observed):",
-            run.evidence[:_SANDBOX_EVIDENCE_CHARS],
+            run.evidence[: config.ASK_SANDBOX_EVIDENCE_CHARS],
         ]
     lines += _debug_lines(store, issue)
     return "\n".join(lines)
@@ -854,7 +845,6 @@ def _timeout_message() -> str:
     )
 
 
-_HOLD_BACK_CHARS = 200
 _KEY_BEGIN_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
 
@@ -874,7 +864,7 @@ class _SafeTokens:
     async def feed(self, piece: str) -> None:
         self._raw += piece
         safe = redact(self._raw)
-        end = len(safe) - _HOLD_BACK_CHARS
+        end = len(safe) - config.ASK_STREAM_HOLD_BACK_CHARS
         begins = list(_KEY_BEGIN_RE.finditer(safe))
         if begins:  # redact() would have replaced a complete key, so this one is open
             end = min(end, begins[-1].start())
@@ -957,7 +947,7 @@ def _validate_citations(
     # code fences are left alone: `xs[lo:5]` is a slice, not a citation
     parts = text.split("```")
     parts[0::2] = [_CITATION_RE.sub(check, p) for p in parts[0::2]]
-    return "```".join(parts), citations[:_MAX_CITATIONS], dropped
+    return "```".join(parts), citations[: config.ASK_MAX_CITATIONS], dropped
 
 
 async def _finish(

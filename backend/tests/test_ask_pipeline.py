@@ -1302,7 +1302,7 @@ async def test_store_full_propagates_before_any_work(
 ) -> None:
     from app import store as store_mod
 
-    monkeypatch.setattr(store_mod, "_MAX_ASK_RUNS", 0)
+    monkeypatch.setattr(config, "ASK_MAX_RUNS", 0)
     with pytest.raises(store_mod.StoreFullError):
         await ask.start_ask(RunStore(), _repo(tmp_path), QUESTION, None)
 
@@ -1425,9 +1425,8 @@ async def _ask_run(ask_id: str, age: float, finished: bool) -> ask.AskRun:
 async def test_full_store_accepts_a_run_when_only_old_finished_runs_fill_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app import store as store_mod
 
-    monkeypatch.setattr(store_mod, "_MAX_ASK_RUNS", 2)
+    monkeypatch.setattr(config, "ASK_MAX_RUNS", 2)
     store = RunStore()
     store.add_ask(await _ask_run("a", 120, True))
     store.add_ask(await _ask_run("b", 90, True))
@@ -1440,7 +1439,7 @@ async def test_full_store_still_rejects_recent_or_running_runs(
 ) -> None:
     from app import store as store_mod
 
-    monkeypatch.setattr(store_mod, "_MAX_ASK_RUNS", 2)
+    monkeypatch.setattr(config, "ASK_MAX_RUNS", 2)
     store = RunStore()
     store.add_ask(await _ask_run("a", 120, False))  # old but still running
     store.add_ask(await _ask_run("b", 5, True))  # finished, but young
