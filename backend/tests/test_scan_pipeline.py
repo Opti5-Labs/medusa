@@ -127,3 +127,117 @@ async def test_scan_repo_labels_missing_granite(tmp_path, monkeypatch, configure
     result = await scan_mod.scan_repo(tmp_path, "zip")
     assert result.files_scanned == ["main.py"] and result.files_total == 1
     assert any("not configured" in w for w in result.warnings) is (not configured)
+
+
+# ── Bob scan when Granite cannot analyse the code ─────────────────────────────
+
+
+def _bob_answers(monkeypatch, issues, *, status="ok", error=None, calls=None):
+    from app.agents import bob
+
+    async def fake_ask(prompt, files, schema, timeout_s=None):
+        if calls is not None:
+            calls.append({"prompt": prompt, "files": files})
+        if status != "ok":
+            return bob.BobAnswer(status, error=error)
+        return bob.BobAnswer(
+            "ok", data=schema.model_validate({"issues": issues}), cost=0.07
+        )
+
+    monkeypatch.setattr(scan_mod.bob, "ask", fake_ask)
+
+
+async def test_bob_scans_when_granite_is_not_configured(tmp_path, monkeypatch):
+    _write(tmp_path, "app/db.py", "def q(s):\n    return 'SELECT ' + s\n")
+    calls: list = []
+    _bob_answers(
+        monkeypatch,
+        [
+            {
+                "file": "app/db.py",
+                "line": 2,
+                "title": "SQL injection",
+                "description": "Concatenated SQL.",
+                "priority": "high",
+                "category": "security",
+            },
+            {"file": "../etc/passwd", "line": 1, "title": "x", "description": "y"},
+        ],
+        calls=calls,
+    )
+    result = await scan_mod.scan_repo(tmp_path, "zip")
+    assert [i.title for i in result.issues] == ["SQL injection"]  # unshown file dropped
+    issue = result.issues[0]
+    assert (issue.found_by, issue.priority, issue.category, issue.line) == (
+        "bob",
+        "High",
+        "security",
+        2,
+    )
+    assert any(
+        "Code analysed by IBM Bob because Granite is unavailable" in w
+        and "0.07 Bobcoins" in w
+        for w in result.warnings
+    )
+    assert "nothing can be executed" in calls[0]["prompt"]
+    assert calls[0]["files"] == {"app/db.py": "def q(s):\n    return 'SELECT ' + s\n"}
+
+
+async def test_bob_scans_when_every_granite_chunk_hits_the_quota(tmp_path, monkeypatch):
+    from app.agents.granite import GraniteUnavailable
+
+    _write(tmp_path, "m.py", "x = 1\n")
+
+    async def quota(*a, **kw):
+        raise GraniteUnavailable(
+            "Granite call failed: the watsonx.ai token quota for this project is used up."
+        )
+
+    monkeypatch.setattr(scan_mod.granite, "is_configured", lambda: True)
+    monkeypatch.setattr(scan_mod.granite, "chat_json", quota)
+    _bob_answers(
+        monkeypatch,
+        [{"file": "m.py", "line": 1, "title": "Unused global", "description": "d"}],
+    )
+    result = await scan_mod.scan_repo(tmp_path, "zip")
+    assert [i.found_by for i in result.issues] == ["bob"]
+    assert any("token quota" in w and "IBM Bob" in w for w in result.warnings)
+
+
+async def test_bob_does_not_scan_when_granite_works(tmp_path, monkeypatch):
+    _write(tmp_path, "m.py", "x = 1\n")
+    calls: list = []
+    _bob_answers(monkeypatch, [], calls=calls)
+    monkeypatch.setattr(scan_mod.granite, "is_configured", lambda: True)
+
+    async def ok(*a, **kw):
+        return _review({"file": "m.py", "line": 1, "title": "G", "description": "d"})
+
+    monkeypatch.setattr(scan_mod.granite, "chat_json", ok)
+    result = await scan_mod.scan_repo(tmp_path, "zip")
+    assert calls == []
+    assert [i.found_by for i in result.issues] == ["granite"]
+
+
+async def test_both_unavailable_names_both_reasons(tmp_path, monkeypatch):
+    _write(tmp_path, "m.py", "x = 1\n")
+    _bob_answers(
+        monkeypatch,
+        [],
+        status="error",
+        error="Bob authentication failed: Invalid or expired API key.",
+    )
+    result = await scan_mod.scan_repo(tmp_path, "zip")
+    assert result.issues == []
+    warning = next(
+        w for w in result.warnings if w.startswith("Code analysis is unavailable")
+    )
+    assert "Granite: Granite is not configured" in warning
+    assert "Bob: Bob authentication failed" in warning
+
+
+def test_bob_scan_respects_the_file_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_mod, "_BOB_SCAN_MAX_CHARS", 100)
+    files = [_write(tmp_path, f"f{i}.py", "x" * 60 + "\n") for i in range(3)]
+    shown = scan_mod._bob_scan_files(tmp_path, files)
+    assert list(shown) == ["f0.py"]

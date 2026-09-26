@@ -20,6 +20,7 @@ module never raises into the pipelines and never substitutes other results.
 """
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -28,9 +29,11 @@ import shutil
 import tempfile
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app import config
 from app.agents.granite import LenientModel, extract_json
@@ -53,7 +56,7 @@ _ALLOWED_SOURCES = {
 }
 _DISABLED_TOOL_GROUPS = "edit,execute,mcp,subagent,skill"
 _CACHE_TTL_S = 6 * 3600
-_cache: OrderedDict[str, tuple[float, InvestigatorResult]] = OrderedDict()
+_cache: OrderedDict[str, tuple[float, "BobAnswer"]] = OrderedDict()
 _loop_semaphores: dict[int, asyncio.Semaphore] = {}
 
 
@@ -209,10 +212,20 @@ def _is_auth_error(text: str) -> bool:
     )
 
 
-def parse_output(
-    stdout: str, stderr: str, returncode: int | None
-) -> InvestigatorResult:
-    """Normalise Bob Shell's NDJSON output (or failure) into an InvestigatorResult."""
+@dataclass
+class BobAnswer:
+    """Outcome of one Bob Shell run, before it is turned into a specific result."""
+
+    status: Literal["ok", "unavailable", "error", "limit"]
+    data: BaseModel | None = None
+    error: str | None = None
+    cost: float | None = None
+
+
+def parse_answer(
+    stdout: str, stderr: str, returncode: int | None, schema: type[BaseModel]
+) -> BobAnswer:
+    """Parse Bob Shell's NDJSON output (or failure) against *schema*."""
     errors: list[str] = []
     result: dict | None = None
     for line in stdout.splitlines():
@@ -233,17 +246,16 @@ def parse_output(
     cost = round(float(cost), 4) if isinstance(cost, int | float) else None
 
     if result is None:
-        detail = _scrub(
-            (stderr or stdout).strip().splitlines()[-1]
-            if (stderr or stdout).strip()
-            else ""
-        )
+        text = (stderr or stdout).strip()
+        detail = _scrub(text.splitlines()[-1] if text else "")
         if _is_auth_error(stderr + stdout):
-            return failed(
-                "bob", f"Bob authentication failed: {detail or 'API key rejected'}"
+            return BobAnswer(
+                "error",
+                error=f"Bob authentication failed: {detail or 'API key rejected'}",
             )
-        return failed(
-            "bob", f"Bob Shell failed (exit {returncode}): {detail or 'no output'}"
+        return BobAnswer(
+            "error",
+            error=f"Bob Shell failed (exit {returncode}): {detail or 'no output'}",
         )
 
     limit_hits = [
@@ -251,18 +263,18 @@ def parse_output(
         for e in errors
         if "maximum" in e.lower() and ("turn" in e.lower() or "cost" in e.lower())
     ]
-    status = str(result.get("status", ""))
     try:
-        finding = BobFinding.model_validate(
+        data = schema.model_validate(
             extract_json(str(result.get("last_message") or ""))
         )
     except (ValueError, TypeError) as exc:
         if limit_hits:
-            return failed(
-                "bob",
-                f"Bob stopped at its limit before answering: {limit_hits[0]} "
-                f"(BOB_MAX_TURNS={config.BOB_MAX_TURNS}, BOB_MAX_COST={config.BOB_MAX_COST}).",
-                limit=True,
+            return BobAnswer(
+                "limit",
+                error=(
+                    f"Bob stopped at its limit before answering: {limit_hits[0]} "
+                    f"(BOB_MAX_TURNS={config.BOB_MAX_TURNS}, BOB_MAX_COST={config.BOB_MAX_COST})."
+                ),
                 cost=cost,
             )
         reason = (
@@ -270,12 +282,27 @@ def parse_output(
             if errors
             else f"its answer was not in the expected format ({type(exc).__name__})"
         )
-        return failed(
-            "bob", f"Bob did not return a usable diagnosis: {_scrub(reason)}", cost=cost
+        return BobAnswer(
+            "error",
+            error=f"Bob did not return a usable answer: {_scrub(reason)}",
+            cost=cost,
         )
 
+    status = str(result.get("status", ""))
     if status and status != "success":
         log.warning("bob: result status %r with a usable answer", status)
+    return BobAnswer("ok", data=data, cost=cost)
+
+
+def _to_investigation(answer: BobAnswer) -> InvestigatorResult:
+    if answer.status != "ok" or not isinstance(answer.data, BobFinding):
+        if answer.status == "unavailable":
+            return unavailable("bob", answer.error or "Bob is unavailable.")
+        error = (answer.error or "Bob failed.").replace(
+            "usable answer", "usable diagnosis"
+        )
+        return failed("bob", error, limit=answer.status == "limit", cost=answer.cost)
+    finding = answer.data
     return InvestigatorResult(
         investigator="bob",
         status="ok",
@@ -285,11 +312,20 @@ def parse_output(
         candidate_fixes=[
             f for f in finding.candidate_fixes if (f.function_source or f.patch)
         ][:3],
-        cost=cost,
+        cost=answer.cost,
     )
 
 
-async def _run_cli(prompt: str, files: dict[str, str]) -> InvestigatorResult:
+def parse_output(
+    stdout: str, stderr: str, returncode: int | None
+) -> InvestigatorResult:
+    """Normalise Bob Shell's output for an investigation into an InvestigatorResult."""
+    return _to_investigation(parse_answer(stdout, stderr, returncode, BobFinding))
+
+
+async def _run_cli(
+    prompt: str, files: dict[str, str], schema: type[BaseModel], timeout_s: float
+) -> BobAnswer:
     workspace = Path(tempfile.mkdtemp(prefix="medusa_bob_"))
     proc = None
     try:
@@ -303,48 +339,70 @@ async def _run_cli(prompt: str, files: dict[str, str]) -> InvestigatorResult:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            out, err = await asyncio.wait_for(proc.communicate(), config.BOB_TIMEOUT_S)
+            out, err = await asyncio.wait_for(proc.communicate(), timeout_s)
         except TimeoutError:
             proc.kill()
             await proc.wait()
-            return failed(
-                "bob",
-                f"Bob did not finish within {config.BOB_TIMEOUT_S} s and was stopped.",
-                limit=True,
+            return BobAnswer(
+                "limit",
+                error=f"Bob did not finish within {round(timeout_s)} s and was stopped.",
             )
-        return parse_output(
+        return parse_answer(
             out.decode("utf-8", "replace"),
             err.decode("utf-8", "replace"),
             proc.returncode,
+            schema,
         )
     except FileNotFoundError:
-        return unavailable("bob", "Bob Shell (`bob`) is not installed on this server.")
+        return BobAnswer(
+            "unavailable", error="Bob Shell (`bob`) is not installed on this server."
+        )
     except OSError as exc:
-        return failed("bob", f"Bob Shell could not start: {_scrub(str(exc))}")
+        return BobAnswer(
+            "error", error=f"Bob Shell could not start: {_scrub(str(exc))}"
+        )
     finally:
         if proc is not None and proc.returncode is None:
             proc.kill()
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-async def investigate(prompt: str, files: dict[str, str]) -> InvestigatorResult:
-    """Run one live Bob investigation. Never raises."""
+async def ask(
+    prompt: str,
+    files: dict[str, str],
+    schema: type[BaseModel],
+    timeout_s: float | None = None,
+) -> BobAnswer:
+    """One live Bob run answering in *schema*. Never raises; cached when successful."""
     if (reason := live_unavailable_reason()) is not None:
-        return unavailable("bob", reason)
+        return BobAnswer("unavailable", error=reason)
     key = hashlib.sha256(
         json.dumps(
-            [prompt, sorted(files.items()), config.BOB_MAX_COST, config.BOB_MAX_TURNS]
+            [
+                schema.__qualname__,
+                prompt,
+                sorted(files.items()),
+                config.BOB_MAX_COST,
+                config.BOB_MAX_TURNS,
+            ]
         ).encode()
     ).hexdigest()
     hit = _cache.get(key)
     if hit and time.monotonic() - hit[0] < _CACHE_TTL_S:
-        log.info("bob: reusing cached investigation")
-        return hit[1].model_copy(deep=True)
+        log.info("bob: reusing cached %s answer", schema.__name__)
+        return copy.deepcopy(hit[1])
     async with _semaphore():
-        result = await _run_cli(prompt, files)
-    if result.status == "ok":
-        _cache[key] = (time.monotonic(), result)
+        answer = await _run_cli(
+            prompt, files, schema, timeout_s or config.BOB_TIMEOUT_S
+        )
+    if answer.status == "ok":
+        _cache[key] = (time.monotonic(), answer)
         while len(_cache) > 200:
             _cache.popitem(last=False)
-    log.info("bob: investigation %s (cost %s)", result.status, result.cost)
-    return result.model_copy(deep=True)
+    log.info("bob: %s run %s (cost %s)", schema.__name__, answer.status, answer.cost)
+    return copy.deepcopy(answer)
+
+
+async def investigate(prompt: str, files: dict[str, str]) -> InvestigatorResult:
+    """Run one live Bob investigation. Never raises."""
+    return _to_investigation(await ask(prompt, files, BobFinding))

@@ -29,6 +29,7 @@ class Issue(BaseModel):
     function: str | None = None
     line: int | None = None
     github_url: str | None = None
+    found_by: Literal["granite", "bob"] | None = None  # scan issues only
 
 
 class ScanResult(BaseModel):
