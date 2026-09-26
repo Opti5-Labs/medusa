@@ -17,24 +17,24 @@ export default function DemoButton() {
       sessionStorage.setItem(`scan:${result.scan_id}`, JSON.stringify(result));
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
+      setError(err instanceof Error ? err.message : "The demo could not start. Please try again.");
       setLoading(false);
     }
   }
 
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="space-y-2">
       <button
         onClick={handleDemo}
         disabled={loading}
         aria-busy={loading}
-        className="px-6 py-3 rounded-lg bg-gray-900 text-white dark:bg-white dark:text-gray-900 font-medium text-center hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full sm:w-auto rounded-lg bg-verdigris-600 hover:bg-verdigris-700 text-white px-5 py-3 text-left transition-colors disabled:opacity-60 disabled:cursor-wait"
       >
-        {loading ? "Loading demo…" : "Run the demo"}
+        <span className="block font-medium">{loading ? "Opening the demo…" : "Run the OptiLearn demo"}</span>
+        <span className="block text-xs text-verdigris-100">Reproduce and fix a real bug, verified in a sandbox</span>
       </button>
       {error && (
-        <p role="alert" className="text-sm text-red-600 dark:text-red-400 max-w-xs text-center">
+        <p role="alert" className="text-sm text-fail dark:text-red-400">
           {error}
         </p>
       )}

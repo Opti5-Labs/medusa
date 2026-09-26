@@ -1,1 +1,78 @@
 @import "tailwindcss";
+
+/*
+ * Medusa palette. The neutral scale is a cool slate (overriding Tailwind's gray,
+ * which every component uses), plus one accent (verdigris) and the two colours
+ * that mean something in a test run: fail and pass.
+ */
+@theme {
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  --color-gray-50: #f7f9fa;
+  --color-gray-100: #edf1f4;
+  --color-gray-200: #d9e1e7;
+  --color-gray-300: #bcc8d2;
+  --color-gray-400: #8d9cab;
+  --color-gray-500: #5a6b7b;
+  --color-gray-600: #455565;
+  --color-gray-700: #33414f;
+  --color-gray-800: #232f3b;
+  --color-gray-900: #15202b;
+  --color-gray-950: #0c141c;
+
+  --color-verdigris-50: #eaf6f5;
+  --color-verdigris-100: #cfeae8;
+  --color-verdigris-300: #7cc2bd;
+  --color-verdigris-400: #4aa6a0;
+  --color-verdigris-600: #0e6b67;
+  --color-verdigris-700: #0b5754;
+  --color-verdigris-900: #073634;
+
+  --color-fail: #b42318;
+  --color-pass: #17784a;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    font-feature-settings: "ss02";
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-verdigris-600);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :focus-visible {
+      outline-color: var(--color-verdigris-400);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The hero transcript reveals its verdict lines once, on load. */
+@keyframes medusa-verdict {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.verdict-line {
+  animation: medusa-verdict 320ms ease-out both;
+}

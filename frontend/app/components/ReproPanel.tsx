@@ -41,8 +41,8 @@ function InvestigatorCard({ report }: { report: InvestigatorReport }) {
       {report.error && <p className="text-red-600 dark:text-red-400 break-words">{report.error}</p>}
       <p className="text-xs text-gray-500">
         {report.confidence !== null && <>Self-reported confidence {Math.round(report.confidence * 100)}% (not used to pick a fix)</>}
-        {report.proposed_fixes > 0 && <> · {report.proposed_fixes} proposed fix(es)</>}
-        {report.cost !== null && <> · {report.cost} Bobcoins</>}
+        {report.proposed_fixes > 0 && <span className="ml-3">{report.proposed_fixes} proposed fix(es)</span>}
+        {report.cost !== null && <span className="ml-3">{report.cost} Bobcoins</span>}
       </p>
     </div>
   );
@@ -67,7 +67,7 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
         <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
         {investigators && <Badge tone={investigators.tone}>{investigators.label}</Badge>}
         <Badge tone={mode === "sandboxed" ? "green" : "amber"}>
-          {mode === "sandboxed" ? "Runs in isolated sandbox" : "Analysis only · not executed"}
+          {mode === "sandboxed" ? "Runs in isolated sandbox" : "Analysis only, not executed"}
         </Badge>
       </div>
 
