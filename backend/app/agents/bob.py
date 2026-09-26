@@ -37,6 +37,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app import config
+from app.agents import bob_budget
 from app.agents.granite import LenientModel, extract_json
 from app.agents.results import (
     CandidateFix,
@@ -95,7 +96,7 @@ def live_unavailable_reason() -> str | None:
         return "BOB_API_KEY is not set on this server."
     if shutil.which(config.BOB_BINARY) is None:
         return "Bob Shell (`bob`) is not installed on this server."
-    return None
+    return bob_budget.budget().exhausted_reason()
 
 
 # ── Replay (recorded session) ─────────────────────────────────────────────────
@@ -413,6 +414,15 @@ async def _run_cli(
         shutil.rmtree(workspace, ignore_errors=True)
 
 
+def _charge(answer: "BobAnswer") -> float:
+    """What a finished run counts against the daily budget."""
+    if answer.cost is not None:
+        return answer.cost  # reported by Bob Shell
+    if answer.status == "limit":
+        return config.BOB_MAX_COST  # timed out: it may have spent up to the cap
+    return 0.0  # never started (not installed, auth failure, no output)
+
+
 async def ask(
     prompt: str,
     files: dict[str, str],
@@ -441,10 +451,25 @@ async def ask(
     if hit and time.monotonic() - hit[0] < _CACHE_TTL_S:
         log.info("bob: reusing cached %s answer", schema.__name__)
         return copy.deepcopy(hit[1])
-    async with _semaphore():
-        answer = await _run_cli(
-            prompt, files, schema, timeout_s or config.BOB_TIMEOUT_S, text_field
+    # Reserve the worst case against today's budget before starting, so
+    # concurrent runs can never overshoot it; settle with the real cost after.
+    reservation = bob_budget.budget().reserve()
+    if reservation is None:
+        reason = bob_budget.budget().exhausted_reason()
+        return BobAnswer(
+            "unavailable", error=reason or "today's Bob budget is used up."
         )
+    try:
+        async with _semaphore():
+            answer = await _run_cli(
+                prompt, files, schema, timeout_s or config.BOB_TIMEOUT_S, text_field
+            )
+    except BaseException:
+        bob_budget.budget().settle(
+            reservation, config.BOB_MAX_COST
+        )  # unknown: worst case
+        raise
+    bob_budget.budget().settle(reservation, _charge(answer))
     if answer.status == "ok":
         _cache[key] = (time.monotonic(), answer)
         while len(_cache) > 200:

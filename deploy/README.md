@@ -31,6 +31,7 @@ IBM_WATSONX_MODEL=ibm/granite-4-h-small
 GITHUB_TOKEN=            # optional
 BOB_API_KEY=...          # optional, Inference-scoped; also install Bob Shell on the host
 BOB_MODE=live            # live | replay | off
+BOB_DAILY_BUDGET=5.0     # Bobcoins per UTC day across all visitors (0 = no cap)
 ```
 
 `setup.sh` adds `TRUST_FORWARDED_FOR=true`, `BOB_MODE=live` and `ALLOWED_ORIGIN` if they are missing.
