@@ -77,7 +77,7 @@ Deploys are serialised (GitHub concurrency group plus a lock on the server).
 | --- | --- |
 | SSM access for the instance | IAM role + instance profile `medusa-ec2-ssm` (`AmazonSSMManagedInstanceCore`) |
 | GitHub OIDC provider | `token.actions.githubusercontent.com` in account 295662440018 |
-| Deploy role | `medusa-github-deploy`: assumable only by `repo:Opti5-Labs/medusa:environment:production`; may `ssm:SendCommand` to `i-06b85ec4b09275bc4` with `AWS-RunShellScript`, read command results, and put/get `releases/*` in the bucket |
+| Deploy role | `medusa-github-deploy`: assumable only by the OIDC subject `repo:Opti5-Labs@268177406/medusa@1387802377:environment:production` (this repo uses GitHub's immutable subject format, owner and repo IDs included, so a renamed or re-created repo cannot assume it); may `ssm:SendCommand` to `i-06b85ec4b09275bc4` with `AWS-RunShellScript`, read command results, and put/get `releases/*` in the bucket |
 | Release bucket | `medusa-deploy-295662440018-apse1`: public access blocked, SSE-S3, TLS only, 14-day expiry |
 | Server config | `/etc/medusa/deploy.env` (`SERVER_NAME=18-141-113-159.sslip.io`) |
 | Repository variables | `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION`, `EC2_INSTANCE_ID`, `RELEASE_BUCKET`, `DEPLOY_URL` |
