@@ -333,3 +333,26 @@ async def test_stream_errors_never_contain_the_key(monkeypatch):
         await _collect("s", "u")
     assert key not in str(excinfo.value)
     assert key not in granite._scrub(f"failed with {key}")
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"ok": true, "n": 7}',
+        '```json\n{"ok": true, "n": 7}\n```',
+        'Here it is:\n{"ok": true, "n": 7}\nThanks!',
+        'Use {braces} like this: {"ok": true, "n": 7}',
+    ],
+)
+def test_extract_json_tolerates_common_model_wrapping(reply):
+    assert granite.extract_json(reply) == {"ok": True, "n": 7}
+
+
+def test_extract_json_accepts_raw_newlines_and_inner_fences():
+    reply = '{"text": "code:\n```python\nx = 1\n```\ndone"}'
+    assert granite.extract_json(reply)["text"] == "code:\n```python\nx = 1\n```\ndone"
+
+
+def test_extract_json_still_rejects_non_json():
+    with pytest.raises(ValueError):
+        granite.extract_json("no json here")

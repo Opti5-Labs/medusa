@@ -191,7 +191,7 @@ async def test_granite_quota_falls_back_to_bob(client, fake_granite, monkeypatch
     fake_granite.raises = granite.GraniteUnavailable("token quota reached")
     monkeypatch.setattr("app.pipelines.ask.bob.live_unavailable_reason", lambda: None)
 
-    async def fake_bob(prompt, files, schema, timeout_s=None):
+    async def fake_bob(prompt, files, schema, timeout_s=None, text_field=None):
         return BobAnswer("ok", data=BobQA(answer="Bob says hi."), cost=0.01)
 
     monkeypatch.setattr("app.pipelines.ask.bob.ask", fake_bob)

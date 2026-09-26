@@ -435,6 +435,17 @@ _INSTANT_RES = [
             r"( (in|of) (this|the) (repo|repository|code|project|codebase|scan))?$"
         ),
         rf"^(list|show|give me|display) (me )?(all )?(the )?{_NOUNS}( found)?$",
+        (
+            r"^(what|which) (issues|problems|bugs|defects|findings) (did|does|has|have) "
+            r"(the )?(scan|medusa|it|you) (find|found|detect|detected|report|reported"
+            r"|show|flag|flagged)"
+            r"( (in|for) (this|the) (repo|repository|code|project|codebase))?$"
+        ),
+        (
+            r"^what (did|does|has) (the )?(scan|medusa) (find|found|detect|detected"
+            r"|report|reported|show)"
+            r"( (in|for) (this|the) (repo|repository|code|project|codebase))?$"
+        ),
         r"^(any|are there( any)?) (issues|problems|bugs)$",
         r"^(how many|number of) (issues|problems|bugs)( (are )?(there|found))?$",
         r"^(issues|problems|bugs)$",
@@ -1076,7 +1087,10 @@ async def _bob_answer(
         bob_ranges.setdefault(p.path, []).append((p.start, last))
     try:
         answer = await bob.ask(
-            _bob_prompt(record, issue, question, retrieval, sandbox), files, BobQA
+            _bob_prompt(record, issue, question, retrieval, sandbox),
+            files,
+            BobQA,
+            text_field="answer",
         )
     except Exception as exc:  # noqa: BLE001 - CancelledError still propagates
         name = type(exc).__name__

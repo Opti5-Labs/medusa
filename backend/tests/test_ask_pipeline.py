@@ -1100,7 +1100,9 @@ def _fake_bob(
 ) -> FakeBob:
     fake = FakeBob()
 
-    async def fake_ask(prompt, files, schema, timeout_s=None) -> BobAnswer:
+    async def fake_ask(
+        prompt, files, schema, timeout_s=None, text_field=None
+    ) -> BobAnswer:
         fake.calls.append((prompt, files))
         return answer or BobAnswer(
             "ok", data=ask.BobQA(answer="Bob says hi"), cost=0.05
@@ -1235,7 +1237,7 @@ async def test_bob_launch_failure_is_reported_not_unexpected(
     _fake_model(monkeypatch, (), then=granite.GraniteUnavailable("quota used up"))
     _fake_bob(monkeypatch)
 
-    async def boom(prompt, files, schema, timeout_s=None) -> BobAnswer:
+    async def boom(prompt, files, schema, timeout_s=None, text_field=None) -> BobAnswer:
         raise NotImplementedError
 
     monkeypatch.setattr(ask.bob, "ask", boom)
@@ -1509,3 +1511,28 @@ async def test_a_recently_finished_run_still_replays() -> None:
     store.add_ask(await _ask_run("b", 0, False))
     assert "a" in store.ask_runs
     assert [n for n, _ in await _collect(store.ask_runs["a"])] == ["done"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What issues did the scan find?",
+        "What did the scan find?",
+        "What did the scan find in this repository?",
+        "Which bugs has Medusa detected?",
+    ],
+)
+def test_scan_finding_questions_are_answered_instantly(question):
+    from app.pipelines.ask import classify
+
+    assert classify(question, None) == "issue_list"
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["Why does the scan find this issue?", "What does the scan function do in app.py?"],
+)
+def test_scan_questions_needing_reasoning_still_go_to_a_model(question):
+    from app.pipelines.ask import classify
+
+    assert classify(question, None) == "model"

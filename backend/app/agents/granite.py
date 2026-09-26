@@ -191,19 +191,30 @@ async def _get_token(client: httpx.AsyncClient) -> str:
         return _token
 
 
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+# A reply that is entirely one fenced block. Fences inside strings are left alone.
+_WHOLE_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*?)\n?```$", re.DOTALL)
 
 
 def extract_json(text: str) -> object:
-    """Parse the model's reply, tolerating code fences or text around one JSON object."""
-    cleaned = _FENCE_RE.sub("", text.strip())
+    """
+    Parse the model's reply: one JSON object, possibly wrapped in a code fence,
+    surrounded by prose, or containing raw newlines inside strings (which strict
+    JSON rejects but models often produce).
+    """
+    cleaned = text.strip()
+    if fence := _WHOLE_FENCE_RE.match(cleaned):
+        cleaned = fence.group(1)
+    decoder = json.JSONDecoder(strict=False)
     try:
-        return json.loads(cleaned)
+        return decoder.decode(cleaned)
     except json.JSONDecodeError:
-        start, end = cleaned.find("{"), cleaned.rfind("}")
-        if start == -1 or end <= start:
-            raise
-        return json.loads(cleaned[start : end + 1])
+        # Take the first complete object, ignoring any text before or after it.
+        for start in [i for i, ch in enumerate(cleaned) if ch == "{"][:20]:
+            try:
+                return decoder.raw_decode(cleaned, start)[0]
+            except json.JSONDecodeError:
+                continue
+        raise
 
 
 def _errors(resp: httpx.Response) -> list[dict]:
