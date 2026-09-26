@@ -157,7 +157,13 @@ _FIX = (
     "--- a/src/calc/__init__.py\n+++ b/src/calc/__init__.py\n"
     "@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n"
 )
-_REPRO = "from calc import add\n\ndef test_add_adds():\n    assert add(2, 3) == 5\n"
+# Two reproducer tests: one passes even with the bug, one fails. The outcome
+# must be "failed" (any failing reproducer test is the evidence).
+_REPRO = (
+    "from calc import add\n\n"
+    "def test_zero_still_works():\n    assert add(0, 0) == 0\n\n"
+    "def test_add_adds():\n    assert add(2, 3) == 5\n"
+)
 
 integration = pytest.mark.skipif(
     os.environ.get("MEDUSA_EXEC_INTEGRATION") != "1",
