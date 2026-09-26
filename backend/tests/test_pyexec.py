@@ -266,8 +266,11 @@ async def test_a_hostile_install_cannot_grow_deps_past_the_cap(tmp_path, monkeyp
     try:
         assert any("size limit" in e for e in prep.env.install_errors)
         client = pyexec._client()
-        out = client.containers.get(prep.env.holder).exec_run(["du", "-sm", "/deps"])
-        assert int(out.output.split()[0]) <= 64
+        # df, not du: du rounds up and counts metadata, so a full 64 MB reads 65
+        out = client.containers.get(prep.env.holder).exec_run(
+            ["df", "-m", "--output=used", "/deps"]
+        )
+        assert int(out.output.split()[-1]) <= 64
     finally:
         await pyexec.release(prep.env)
 
