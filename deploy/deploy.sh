@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # Deploy one commit of main. Run as root on the server, normally by the GitHub
-# Actions workflow through AWS SSM (no SSH):
+# Actions workflow through AWS SSM (no SSH, no GitHub access on the server):
 #
-#   bash /opt/medusa/deploy/deploy.sh <commit-sha>
+#   bash /opt/medusa/deploy/deploy.sh <commit-sha> <archive-url>
 #
-# Expects (one-time setup, see deploy/README.md):
-#   - /opt/medusa is a git checkout of the repo
-#   - /root/.ssh/medusa_repo_key is a read-only deploy key for the repo
-#   - /etc/medusa/deploy.env sets SERVER_NAME (and optionally CERT_EMAIL)
-# Untracked build output and venvs (.venv, node_modules, .next) are kept, so
-# setup.sh only rebuilds what changed. Secrets stay in /etc/medusa/env.
+# <archive-url> is a short-lived presigned S3 URL to `git archive` of that
+# commit, uploaded by the workflow. The archive's embedded commit id must match
+# <commit-sha>. The code is synced into /opt/medusa, keeping untracked build
+# output and venvs (.venv, node_modules, .next), then deploy/setup.sh runs.
+# Secrets stay in /etc/medusa/env; /etc/medusa/deploy.env sets SERVER_NAME.
 set -euo pipefail
 
-SHA=${1:?usage: deploy.sh <commit-sha>}
+SHA=${1:?usage: deploy.sh <commit-sha> <archive-url>}
+URL=${2:?usage: deploy.sh <commit-sha> <archive-url>}
 APP=/opt/medusa
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root"; exit 1; }
-[[ "$SHA" =~ ^[0-9a-f]{7,40}$ ]] || { echo "not a commit sha: $SHA"; exit 1; }
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit sha: $SHA"; exit 1; }
+[[ "$URL" == https://*.amazonaws.com/* ]] || { echo "unexpected archive url"; exit 1; }
 
 # One deploy at a time.
 exec 9>/var/lock/medusa-deploy.lock
@@ -24,21 +25,26 @@ flock -w 900 9 || { echo "another deploy is still running"; exit 1; }
 
 # shellcheck source=/dev/null
 source /etc/medusa/deploy.env
-export GIT_SSH_COMMAND="ssh -i /root/.ssh/medusa_repo_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-git config --global --get-all safe.directory | grep -qx "$APP" || git config --global --add safe.directory "$APP"
 
-cd "$APP"
-echo "==> fetching main"
-git fetch --quiet origin main
-if ! git merge-base --is-ancestor "$SHA" origin/main; then
-  echo "refusing to deploy $SHA: it is not on origin/main"
-  exit 1
-fi
-echo "==> checking out $SHA (was $(git rev-parse --short HEAD 2>/dev/null || echo none))"
-git reset --quiet --hard "$SHA"
-git clean -fdq  # tracked-file deletions only; ignored build output is kept
+WORK=$(mktemp -d /tmp/medusa-release.XXXXXX)
+trap 'rm -rf "$WORK"' EXIT
+
+echo "==> downloading ${SHA:0:7}"
+curl -fsS --retry 3 -o "$WORK/release.tar.gz" "$URL"
+EMBEDDED=$(gunzip -c "$WORK/release.tar.gz" | git get-tar-commit-id)
+[ "$EMBEDDED" = "$SHA" ] || { echo "archive is commit $EMBEDDED, expected $SHA"; exit 1; }
+
+mkdir "$WORK/src"
+tar -xzf "$WORK/release.tar.gz" -C "$WORK/src"
+[ -f "$WORK/src/deploy/setup.sh" ] || { echo "archive does not look like Medusa"; exit 1; }
+
+echo "==> syncing into $APP (was $(cat "$APP/.deployed-sha" 2>/dev/null | cut -c1-7 || echo unknown))"
+rsync -a --delete \
+  --exclude '.venv/' --exclude 'node_modules/' --exclude '.next/' --exclude '.deployed-sha' \
+  "$WORK/src/" "$APP/"
+echo "$SHA" > "$APP/.deployed-sha"
 
 echo "==> setup"
 SERVER_NAME="$SERVER_NAME" CERT_EMAIL="${CERT_EMAIL:-}" bash "$APP/deploy/setup.sh"
 
-echo "==> deployed $(git rev-parse --short HEAD)"
+echo "==> deployed ${SHA:0:7}"

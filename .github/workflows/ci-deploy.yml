@@ -1,11 +1,14 @@
 # CI on every pull request and push; deploy to EC2 when main passes.
 #
-# Deploy uses GitHub OIDC to assume an AWS role that can only send a run-command
-# to the Medusa instance (no AWS keys or SSH keys in GitHub). The instance then
-# runs deploy/deploy.sh <sha>, which checks out that commit of main and runs
-# deploy/setup.sh. One-time setup: deploy/README.md, "Automatic deploys".
+# Deploy uses GitHub OIDC to assume an AWS role that can only upload release
+# archives and send a run-command to the Medusa instance (no AWS keys or SSH
+# keys in GitHub). The workflow uploads `git archive` of the commit to a private
+# S3 bucket and gives the instance a 15-minute download link; the instance runs
+# that archive's deploy/deploy.sh, which syncs the code and runs setup.sh. The
+# server needs no GitHub or S3 credentials. Setup: deploy/README.md.
 #
-# Repository variables: AWS_DEPLOY_ROLE_ARN, AWS_REGION, EC2_INSTANCE_ID, DEPLOY_URL
+# Repository variables: AWS_DEPLOY_ROLE_ARN, AWS_REGION, EC2_INSTANCE_ID,
+# RELEASE_BUCKET, DEPLOY_URL
 
 name: CI and deploy
 
@@ -70,23 +73,43 @@ jobs:
       contents: read
       id-token: write # OIDC token for AWS
     steps:
+      - uses: actions/checkout@v7
+
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Upload release archive
+        id: release
+        env:
+          BUCKET: ${{ vars.RELEASE_BUCKET }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz -o release.tar.gz "$SHA"
+          aws s3 cp --only-show-errors release.tar.gz "s3://$BUCKET/releases/$SHA.tar.gz"
+          # Short-lived link: the server needs no S3 or GitHub credentials.
+          url=$(aws s3 presign "s3://$BUCKET/releases/$SHA.tar.gz" --expires-in 900)
+          echo "::add-mask::$url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
       - name: Deploy ${{ github.sha }} via SSM
         env:
           INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
           SHA: ${{ github.sha }}
+          URL: ${{ steps.release.outputs.url }}
         run: |
           set -euo pipefail
+          # Run the deploy.sh from this commit's archive, not whatever is on the server.
+          script="set -euo pipefail; a=\$(mktemp); d=\$(mktemp); trap 'rm -f \"\$a\" \"\$d\"' EXIT; curl -fsS --retry 3 -o \"\$a\" '$URL'; tar -xzOf \"\$a\" deploy/deploy.sh > \"\$d\"; bash \"\$d\" $SHA '$URL'"
+          params=$(jq -nc --arg c "$script" '{commands: [$c], executionTimeout: ["1800"]}')
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
             --comment "medusa deploy ${SHA:0:7}" \
             --timeout-seconds 600 \
-            --parameters "{\"commands\":[\"bash /opt/medusa/deploy/deploy.sh $SHA\"],\"executionTimeout\":[\"1800\"]}" \
+            --parameters "$params" \
             --query Command.CommandId --output text)
           echo "SSM command: $CMD_ID"
           status=Pending
