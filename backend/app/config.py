@@ -109,6 +109,11 @@ EXEC_DEPS_SIZE: str = "1g"  # RAM cap on what one repo can install
 EXEC_INSTALL_TIMEOUT_S: int = 300
 EXEC_TEST_TIMEOUT_S: int = 180
 EXEC_MAX_CONCURRENT: int = 2
+EXEC_MAX_ENVS: int = (
+    3  # prepared repos alive at once (each holds up to EXEC_DEPS_SIZE of RAM)
+)
+EXEC_LOG_MAX_LINES: int = 1500  # output lines streamed per container run
+EXEC_LOG_MAX_LINE_BYTES: int = 64 * 1024
 
 # ── Sandbox image ──────────────────────────────────────────────────────────────
 SANDBOX_IMAGE: str = os.getenv("SANDBOX_IMAGE", "medusa-optilearn:latest")

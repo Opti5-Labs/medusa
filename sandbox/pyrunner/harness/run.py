@@ -112,7 +112,12 @@ def install() -> int:
     if not ok:
         errors.append(f"pytest: {detail}")
     # Persist the capped staging area into the dependency volume for the test phase.
-    shutil.copytree(STAGING, DEPS, symlinks=True, dirs_exist_ok=True)
+    # /deps is a size-capped RAM volume; the repo's own install code may have
+    # filled it already, which leaves the test phase without some packages.
+    try:
+        shutil.copytree(STAGING, DEPS, symlinks=True, dirs_exist_ok=True)
+    except (OSError, shutil.Error) as exc:
+        errors.append(f"dependencies exceed the sandbox's size limit ({type(exc).__name__})")
     _emit("MEDUSA_INSTALL", {"installed": installed, "errors": errors})
     return 0
 
