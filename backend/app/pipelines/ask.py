@@ -108,6 +108,20 @@ _BOILERPLATE_SUFFIXES = frozenset({".lock", ".sum"})
 _WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 _CAMEL_RE = re.compile(r"[a-z][A-Z]")
 _LONG_WORD = 8
+_CREDENTIAL_NAMES = frozenset(
+    {
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "credentials",
+        "credentials.json",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+    }
+)
+_CREDENTIAL_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 _FALLBACK_STEMS = frozenset(
     {"main", "app", "index", "server", "cli", "manage", "__main__"}
 )
@@ -140,6 +154,16 @@ def _tier(display_path: str) -> int:
     return 1 if suffix in _CONFIG_DOC_SUFFIXES else 2
 
 
+def _is_credential_file(name: str) -> bool:
+    lowered = name.lower()
+    return (
+        lowered == ".env"
+        or lowered.startswith(".env.")
+        or lowered.endswith(_CREDENTIAL_SUFFIXES)
+        or lowered in _CREDENTIAL_NAMES
+    )
+
+
 def list_repo_files(root: Path, prefix: str) -> list[str]:
     found: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -147,6 +171,8 @@ def list_repo_files(root: Path, prefix: str) -> list[str]:
             d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")
         ]
         for name in filenames:
+            if _is_credential_file(name):
+                continue
             path = Path(dirpath) / name
             if path.suffix.lower() in SKIP_SUFFIXES:
                 continue
@@ -178,7 +204,8 @@ def read_file(root: Path, prefix: str, display_path: str) -> str | None:
 _SECRET_RES = [
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?"
+        r"(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
         re.DOTALL,
     ),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}"),
@@ -845,15 +872,12 @@ def _timeout_message() -> str:
     )
 
 
-_KEY_BEGIN_RE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
-
-
 class _SafeTokens:
     """Sends only redacted text; the tail is held back until more text arrives.
 
     A secret can be split across pieces, so redact() runs over everything seen so
-    far and only the settled part (all but the last 200 characters, and nothing
-    from an unterminated private key) leaves the server.
+    far and only the settled part (all but the last 200 characters) leaves the
+    server. An unterminated private key is redacted to the end of the text.
     """
 
     def __init__(self, channel: EventChannel) -> None:
@@ -865,9 +889,6 @@ class _SafeTokens:
         self._raw += piece
         safe = redact(self._raw)
         end = len(safe) - config.ASK_STREAM_HOLD_BACK_CHARS
-        begins = list(_KEY_BEGIN_RE.finditer(safe))
-        if begins:  # redact() would have replaced a complete key, so this one is open
-            end = min(end, begins[-1].start())
         await self._send(safe, end)
 
     async def flush(self) -> None:

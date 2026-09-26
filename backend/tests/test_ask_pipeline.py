@@ -238,6 +238,38 @@ def test_junk_binary_and_minified_files_are_never_picked(tmp_path: Path) -> None
     assert [p.path for p in picked] == ["src/real.py"]
 
 
+def test_credential_files_are_never_listed_or_picked(tmp_path: Path) -> None:
+    term = "compute_whisper_offset"
+    secrets = [
+        ".env",
+        ".env.local",
+        ".env.production",
+        "server.pem",
+        "tls.key",
+        "cert.p12",
+        "cert.pfx",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "credentials",
+        "credentials.json",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        "config/.env",
+        "keys/deploy.KEY",
+    ]
+    for name in secrets:
+        _write(tmp_path, name, f"{term} = 'hunter2hunter2'\n")
+    _write(tmp_path, "src/real.py", f"def {term}(): pass\n")
+    _write(tmp_path, "environment.py", f"def {term}(): pass\n")
+    paths = ask.list_repo_files(tmp_path, "")
+    assert sorted(paths) == ["environment.py", "src/real.py"]
+    picked = ask.pick_files(tmp_path, "", paths, f"where is {term}", None)
+    assert all("hunter2" not in p.text for p in picked)
+
+
 def test_file_listing_puts_code_before_docs_before_others(tmp_path: Path) -> None:
     for name in ("z.py", "a.md", "b.txt", "c.weird", "a.py"):
         _write(tmp_path, name, "x\n")
@@ -1368,6 +1400,30 @@ async def test_open_private_key_is_never_streamed(
     joined = "".join(_tokens(events))
     assert "MIIBOg" not in joined and "BEGIN RSA" not in joined
     assert "[REDACTED]" in joined and joined.endswith(" tail")
+
+
+_OPEN_KEY = "-----BEGIN RSA PRIVATE " + "KEY-----\nMIIBOgIBAAJBAKj34Gkx\nabcdef\n"
+
+
+def test_unterminated_private_key_is_redacted_to_the_end() -> None:
+    assert ask.redact("before\n" + _OPEN_KEY + "still secret") == "before\n[REDACTED]"
+    text = "a\n" + _OPEN_KEY + "tail"
+    kept = ask._redact_keeping_lines(text)
+    assert "MIIBOg" not in kept and "tail" not in kept
+    assert kept.count("\n") == text.count("\n")
+
+
+async def test_unterminated_private_key_is_redacted_in_stream_and_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pieces = ("start " + "z" * 250, _OPEN_KEY[:30], _OPEN_KEY[30:], "more MIIBOg")
+    _fake_model(monkeypatch, pieces)
+    _, events = await _run(RunStore(), _repo(tmp_path))
+    joined = "".join(_tokens(events))
+    assert "MIIBOg" not in joined and "BEGIN RSA" not in joined
+    assert joined.endswith("[REDACTED]")
+    final = _final(events).answer
+    assert final == joined and "MIIBOg" not in final
 
 
 async def test_bob_gets_redacted_files_and_prompt_with_lines_intact(
