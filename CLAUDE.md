@@ -15,13 +15,13 @@ Two paths through the product:
 
 | Path           | Input                                     | Executes code?                      | Models                                                     |
 | -------------- | ----------------------------------------- | ----------------------------------- | ---------------------------------------------------------- |
-| OptiLearn demo | Built-in demo repo with a known, real bug | Yes, inside the Docker sandbox only | Bob (golden run replay) for investigators + recommendation |
-| General repos  | Public GitHub URL or uploaded zip         | **Never**                           | Granite for scan, reproduce reasoning, and fix proposals   |
+| OptiLearn demo | Built-in demo repo with a known, real bug | Yes, inside the Docker sandbox only | Bob + Granite as independent investigators; sandbox verifies  |
+| General repos  | Public GitHub URL or uploaded zip         | **Never**                           | Granite scan; Bob + Granite diagnose and propose (unverified) |
 
 ## Hard rules
 
 1. **Scope is frozen.** Do not build: sandboxed execution on general repos, GitHub OAuth or pull-request creation, a database, user accounts. If a task seems to need one, stop and ask.
-2. **Only one place runs code:** `backend/app/sandbox/runner.py`, and only for the OptiLearn image. Never call `subprocess`, `os.system`, `exec`, `eval`, `pip install`, `npm install`, or Docker on anything from a linked repo or uploaded zip. General-repo code is read as text, nothing more.
+2. **Only one place runs code:** `backend/app/sandbox/runner.py`, and only for the OptiLearn image. Never call `subprocess`, `os.system`, `exec`, `eval`, `pip install`, `npm install`, or Docker on anything from a linked repo or uploaded zip. General-repo code is read as text, nothing more. The one other subprocess is `agents/bob.py` starting the Bob Shell CLI (our tool, not repo code) in ask mode with the `edit`/`execute` tool groups disabled, on a throwaway copy of the files, with only `PATH`, `HOME` and `BOB_API_KEY` in its environment.
 3. **No secrets anywhere in the repo.** Not in code, tests, fixtures, logs, prompts, or golden-run files. All config comes from env vars loaded from `.env` (gitignored). An exposed IBM credential gets the hackathon account deactivated.
 4. **Sandbox containers get zero credentials.** Never pass `os.environ` or any `environment=` containing keys to a container.
 5. **Contracts stay in sync.** `backend/app/models/contracts.py` and `frontend/lib/api.ts` describe the same shapes. Change one, change the other in the same commit.
@@ -123,7 +123,10 @@ IBM_WATSONX_PROJECT_ID=
 IBM_WATSONX_URL=https://eu-de.ml.cloud.ibm.com   # our project is in Frankfurt
 IBM_WATSONX_MODEL=ibm/granite-4-h-small          # GRANITE_MODEL_ID also accepted
 GITHUB_TOKEN=                                    # optional; fine-grained, no scopes, raises rate limit
-BOB_MODE=replay                                  # replay (default, deployed) | live (local only)
+BOB_MODE=live                                    # live (default) | replay | off
+BOB_API_KEY=                                     # Inference-scoped, backend only
+BOB_MAX_COST=0.25                                # Bobcoins per investigation
+BOB_MAX_TURNS=6
 SANDBOX_IMAGE=medusa-optilearn:latest
 MAX_CONCURRENT_SANDBOXES=6
 ALLOWED_ORIGIN=http://localhost:3000
@@ -245,9 +248,13 @@ A candidate whose patch won't apply or whose run fails shows `failed` in its own
 
 ## Bob
 
-- `BOB_MODE=replay` (default, and the only mode on the deployed server): `agents/bob.py` streams `golden/optilearn/investigation.jsonl` (format in `golden/optilearn/README.md`) as `LogEvent`s with realistic pacing. The UI badges these as "Recorded Bob session". Until that file exists, the demo investigators run live on Granite and are labelled as such.
-- `BOB_MODE=live` (local dev only): calls Bob Shell non-interactively. Burns Bobcoins. Check the Bob Shell docs for the exact invocation; don't guess flags.
-- Golden run files are reviewed for secrets and personal paths before commit.
+Bob and Granite are **independent investigators** (`agents/panel.py`). Both get the same inputs (issue, relevant code, and on the demo path the sandbox's runtime evidence), run in parallel, never see each other's diagnosis, and return the same normalised `InvestigatorResult` (`agents/results.py`). Their confidence is displayed, never used to rank. Their proposed fixes go through the same sandbox race; `pipelines/verify.py` decides.
+
+- `BOB_MODE=live` (default): `agents/bob.py` runs `bob run --format json --mode ask` with `--max-cost $BOB_MAX_COST` (0.25) and `--max-turns $BOB_MAX_TURNS` (6), `--disable-tool-groups edit,execute,mcp,subagent,skill`, a wall-clock timeout, and a 6-hour cache of successful answers. The key is an Inference-scoped `BOB_API_KEY` (no `--team-id`), backend only.
+- `BOB_MODE=replay`: streams `golden/optilearn/investigation.jsonl` (format in `golden/optilearn/README.md`) as a "Recorded Bob session". `BOB_MODE=off`: Bob is not used.
+- Degradation: both available → both; one unavailable → the other, with the reason shown; both unavailable → prepared candidates, labelled. Bob failures (not installed, no key, auth, turn/cost limit, timeout, unusable answer) are always surfaced with the real reason, never silently replaced.
+- Debug slots: Bob's own fixes take up to half; Granite fills the rest from its own diagnosis; prepared only for slots neither filled. Only Granite candidates get the revision round (it costs no Bobcoins).
+- Tests never call live Bob: `tests/conftest.py` blanks `BOB_API_KEY` and points `BOB_BINARY` at nothing. Bob tests use a fake `bob` executable.
 
 ## Granite
 

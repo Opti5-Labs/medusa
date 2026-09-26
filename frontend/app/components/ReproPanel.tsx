@@ -1,6 +1,6 @@
 "use client";
 
-import type { LogEvent, Mode, ReproAttempt } from "../../lib/api";
+import type { InvestigatorReport, LogEvent, Mode, ReproAttempt } from "../../lib/api";
 import Badge, { type Tone } from "./Badge";
 import LogView from "./LogView";
 
@@ -14,9 +14,39 @@ const STATUS: Record<ReproAttempt["status"], { label: string; tone: Tone }> = {
 
 const INVESTIGATORS: Record<string, { label: string; tone: Tone }> = {
   bob_replay: { label: "Recorded Bob session", tone: "violet" },
-  granite: { label: "Investigators: Granite (live)", tone: "blue" },
+  bob: { label: "Investigator: Bob (live)", tone: "violet" },
+  granite: { label: "Investigator: Granite (live)", tone: "blue" },
+  bob_and_granite: { label: "Investigators: Bob + Granite (independent)", tone: "violet" },
   unavailable: { label: "Investigators unavailable", tone: "amber" },
 };
+
+const REPORT_STATUS: Record<InvestigatorReport["status"], { label: string; tone: Tone }> = {
+  ok: { label: "Diagnosed", tone: "green" },
+  unavailable: { label: "Unavailable", tone: "amber" },
+  error: { label: "Failed", tone: "red" },
+  limit: { label: "Stopped at limit", tone: "amber" },
+};
+
+function InvestigatorCard({ report }: { report: InvestigatorReport }) {
+  const name = report.investigator === "bob" ? "IBM Bob" : "Granite";
+  const status = REPORT_STATUS[report.status];
+  return (
+    <div className="rounded-md border border-gray-200 dark:border-gray-800 p-3 text-sm space-y-1 min-w-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-medium">{name}</span>
+        <Badge tone={status.tone}>{status.label}</Badge>
+        {report.recorded && <Badge tone="violet">Recorded session</Badge>}
+      </div>
+      {report.root_cause && <p className="text-gray-700 dark:text-gray-300">{report.root_cause}</p>}
+      {report.error && <p className="text-red-600 dark:text-red-400 break-words">{report.error}</p>}
+      <p className="text-xs text-gray-500">
+        {report.confidence !== null && <>Self-reported confidence {Math.round(report.confidence * 100)}% (not used to pick a fix)</>}
+        {report.proposed_fixes > 0 && <> · {report.proposed_fixes} proposed fix(es)</>}
+        {report.cost !== null && <> · {report.cost} Bobcoins</>}
+      </p>
+    </div>
+  );
+}
 
 interface Props {
   mode: Mode;
@@ -49,7 +79,15 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
         </p>
       )}
 
-      {finished && attempt.root_cause && (
+      {finished && attempt.investigators.length > 0 && (
+        <div className="grid gap-2 md:grid-cols-2">
+          {attempt.investigators.map((r) => (
+            <InvestigatorCard key={r.investigator} report={r} />
+          ))}
+        </div>
+      )}
+
+      {finished && attempt.root_cause && attempt.investigators.every((r) => r.status !== "ok") && (
         <div className="rounded-md bg-gray-50 dark:bg-gray-900 p-3 text-sm space-y-1">
           <p className="font-medium">
             {attempt.status === "not_reproducible"

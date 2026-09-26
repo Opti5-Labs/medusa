@@ -2,12 +2,13 @@
 Debug pipeline: the Debug Race.
 
 sandboxed (OptiLearn demo):
-    bug gate (reuse the reproduce baseline, or run it now) → candidates from
-    Granite, with prepared candidates filling any slot Granite cannot → each
+    bug gate (reuse the reproduce baseline, or run it now) → candidates: Bob's
+    own proposals (up to half the slots), Granite for the rest, prepared
+    candidates only for slots neither filled → each
     candidate spliced into its own copy and tested in its own sandbox, in
     parallel → deterministic verification → recommendation
 reasoning (general repos):
-    candidates from Granite as unified diffs, shown but never applied or run
+    Bob's proposed diffs, then Granite's, shown but never applied or run
 
 A candidate that fails never stops the others. The run ends with a `done`
 event carrying DebugDone (session + recommendation).
@@ -15,18 +16,21 @@ event carrying DebugDone (session + recommendation).
 
 import asyncio
 import logging
+import math
 import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from app.agents import panel
 from app.agents.fixers import STRATEGIES, diff_candidate, function_candidate
 from app.agents.granite import GraniteError, is_configured
+from app.agents.results import CandidateFix, InvestigatorResult
 from app.demo import optilearn
 from app.models.contracts import DebugDone, DebugSession, FixAttempt, Issue
 from app.pipelines import verify
 from app.pipelines.context import select_files
-from app.pipelines.repro import is_sandboxed, run_baseline
+from app.pipelines.repro import is_sandboxed, run_baseline, runtime_evidence
 from app.sandbox.runner import SandboxResult, docker_available, run_checks
 from app.store import DebugRun, RunStore, ScanRecord
 from app.streaming import EventChannel
@@ -84,14 +88,21 @@ async def _guarded(run: DebugRun, pipeline) -> None:
         await run.channel.done(done.model_dump_json())
 
 
-def _root_cause(store: RunStore, issue: Issue) -> str:
+def _investigation(
+    store: RunStore, issue: Issue, name: str
+) -> InvestigatorResult | None:
+    """The given investigator's result from the latest reproduce run, if any."""
     repro = store.latest_repro_for(issue.id)
-    if (
-        repro
-        and repro.attempt.root_cause
-        and repro.attempt.status in ("reproduced", "plausible")
-    ):
-        return repro.attempt.root_cause
+    if repro is None:
+        return None
+    return next((r for r in repro.investigations if r.investigator == name), None)
+
+
+def _own_root_cause(store: RunStore, issue: Issue, name: str) -> str:
+    """An investigator's own diagnosis, never the other's (keeps them independent)."""
+    result = _investigation(store, issue, name)
+    if result is not None and result.ok and result.root_cause:
+        return result.root_cause
     return issue.description
 
 
@@ -100,8 +111,8 @@ def _root_cause(store: RunStore, issue: Issue) -> str:
 
 async def _bug_gate(
     store: RunStore, run: DebugRun, issue: Issue
-) -> SandboxResult | None:
-    """Return the original-code run if the bug reproduces, else None (gate closed)."""
+) -> tuple[SandboxResult, str] | None:
+    """(original-code run, runtime evidence) if the bug reproduces, else None (gate closed)."""
     ch = run.channel
     repro = store.latest_repro_for(issue.id)
     if repro and repro.task and not repro.task.done():
@@ -120,10 +131,11 @@ async def _bug_gate(
             "info",
             "Bug gate open: reusing the reproduction from the reproduce run",
         )
-        return repro.baseline
+        return repro.baseline, repro.evidence or ""
 
     await ch.emit("gate", "info", "Running the reproducer against the original code")
-    baseline = await run_baseline(ch, "gate")
+    captured: list[str] = []
+    baseline = await run_baseline(ch, "gate", captured)
     if not baseline.ok:
         await ch.emit("gate", "error", baseline.error or "Sandbox run failed.")
         return None
@@ -137,36 +149,59 @@ async def _bug_gate(
     await ch.emit(
         "gate", "result", "Bug gate open: the reproducer fails on the original code"
     )
-    return baseline
+    return baseline, runtime_evidence(captured)
+
+
+async def _bob_fixes(
+    store: RunStore, run: DebugRun, issue: Issue, evidence: str
+) -> list[CandidateFix]:
+    """Bob's proposed fixes: reused from the reproduce run, else Bob investigates now."""
+    ch = run.channel
+    result = _investigation(store, issue, "bob")
+    if result is None:
+        result = await panel.bob_demo_only(
+            issue, optilearn.context_files(), evidence, optilearn.TARGET_FUNCTION, ch
+        )
+    elif result.ok:
+        await ch.emit("bob", "info", "Using the fixes Bob proposed during reproduce")
+    else:
+        await ch.emit("bob", "warn", f"Bob has no fixes to offer: {result.error}")
+    return [f for f in result.candidate_fixes if f.function_source] if result.ok else []
 
 
 async def _generate_sources(
-    run: DebugRun, issue: Issue, root_cause: str
+    run: DebugRun, issue: Issue, granite_root_cause: str, bob_fixes: list[CandidateFix]
 ) -> list[tuple[str, str, str] | None]:
     """(approach, function_source, origin) per slot, or None when nothing is available."""
     ch = run.channel
     slots = run.session.candidates
-    current = optilearn.target_function_source()
-    module = optilearn.fixer_context()
-    acceptance = optilearn.acceptance_criteria()
     generated: list[tuple[str, str, str] | None] = [None] * len(slots)
 
-    if is_configured():
+    # Bob's own proposals take up to half the slots; Granite fills the rest.
+    n_bob = min(len(bob_fixes), math.ceil(len(slots) / 2))
+    for i, fix in enumerate(bob_fixes[:n_bob]):
+        generated[i] = (fix.approach, fix.function_source or "", "bob")
+    granite_slots = list(range(n_bob, len(slots)))
+
+    if granite_slots and is_configured():
+        current = optilearn.target_function_source()
+        module = optilearn.fixer_context()
+        acceptance = optilearn.acceptance_criteria()
         await ch.emit(
             "granite",
             "info",
-            f"Generating {len(slots)} candidate fixes, one strategy each",
+            f"Generating {len(granite_slots)} candidate fixes, one strategy each",
         )
 
-        async def one(i: int) -> None:
+        async def one(i: int, strategy: str) -> None:
             try:
                 cand = await function_candidate(
                     issue,
-                    root_cause,
+                    granite_root_cause,
                     optilearn.TARGET_FUNCTION,
                     current,
                     module,
-                    slots[i].approach,
+                    strategy,
                     acceptance,
                 )
                 optilearn.splice(cand.function_source)  # reject unusable output early
@@ -178,9 +213,18 @@ async def _generate_sources(
                     f"Granite candidate unusable: {exc}",
                 )
 
-        await asyncio.gather(*(one(i) for i in range(len(slots))))
-    else:
-        await ch.emit("granite", "warn", "Granite is not configured on this server.")
+        await asyncio.gather(
+            *(
+                one(i, STRATEGIES[k % len(STRATEGIES)])
+                for k, i in enumerate(granite_slots)
+            )
+        )
+    elif granite_slots:
+        await ch.emit(
+            "granite",
+            "warn",
+            "Granite unavailable: Granite is not configured on this server.",
+        )
 
     prepared = iter(optilearn.load_prepared())
     used_prepared = 0
@@ -192,7 +236,7 @@ async def _generate_sources(
         await ch.emit(
             "medusa",
             "warn",
-            f"Using {used_prepared} prepared candidate(s) where Granite could not generate one.",
+            f"Using {used_prepared} prepared candidate(s) for slots neither Bob nor Granite filled.",
         )
     return generated
 
@@ -347,14 +391,16 @@ async def _run_sandboxed(store: RunStore, run: DebugRun, issue: Issue) -> None:
             c.sandbox_status, c.error = "failed", "Sandbox unavailable."
         return
 
-    baseline = await _bug_gate(store, run, issue)
-    if baseline is None:
+    gate = await _bug_gate(store, run, issue)
+    if gate is None:
         for c in run.session.candidates:
             c.sandbox_status, c.error = "failed", "Not run: bug gate closed."
         return
+    baseline, evidence = gate
 
-    root_cause = _root_cause(store, issue)
-    sources = await _generate_sources(run, issue, root_cause)
+    root_cause = _own_root_cause(store, issue, "granite")
+    bob_fixes = await _bob_fixes(store, run, issue, evidence)
+    sources = await _generate_sources(run, issue, root_cause, bob_fixes)
     run.tmp_dir = Path(tempfile.mkdtemp(prefix="medusa_debug_"))
     jobs = []
     for candidate, slot in zip(run.session.candidates, sources, strict=True):
@@ -413,7 +459,31 @@ async def _run_reasoning(
             "medusa", "error", "Could not find source files related to this issue."
         )
         return
-    root_cause = _root_cause(store, issue)
+    root_cause = _own_root_cause(store, issue, "granite")
+
+    bob_result = _investigation(store, issue, "bob")
+    if bob_result is None:
+        bob_result = await panel.bob_general_only(issue, files, ch)
+    elif not bob_result.ok:
+        await ch.emit("bob", "warn", f"Bob has no fixes to offer: {bob_result.error}")
+    bob_patches = (
+        [f for f in bob_result.candidate_fixes if f.patch] if bob_result.ok else []
+    )
+    n_bob = min(len(bob_patches), math.ceil(len(run.session.candidates) / 2))
+    for candidate, fix in zip(
+        run.session.candidates[:n_bob], bob_patches, strict=False
+    ):
+        candidate.approach, candidate.patch, candidate.origin = (
+            fix.approach,
+            fix.patch,
+            "bob",
+        )
+        candidate.patch_stats = optilearn.patch_stats(fix.patch or "")
+        await ch.emit(
+            f"candidate:{candidate.candidate_id}",
+            "result",
+            "Proposed by Bob (not tested)",
+        )
 
     async def one(candidate: FixAttempt) -> None:
         tag = f"candidate:{candidate.candidate_id}"
@@ -432,7 +502,7 @@ async def _run_reasoning(
         candidate.patch_stats = optilearn.patch_stats(cand.patch)
         await ch.emit(tag, "result", f"Proposed (not tested): {cand.explanation}")
 
-    await asyncio.gather(*(one(c) for c in run.session.candidates))
+    await asyncio.gather(*(one(c) for c in run.session.candidates[n_bob:]))
     run.recommendation = verify.recommend_unverified(run.session.candidates)
     if run.recommendation:
         await ch.emit("recommendation", "result", run.recommendation.reason)

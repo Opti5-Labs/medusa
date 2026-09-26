@@ -57,6 +57,7 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
           <span className="font-mono text-sm font-semibold">{c.candidate_id}</span>
           <Badge tone={STATUS[c.sandbox_status].tone}>{STATUS[c.sandbox_status].label}</Badge>
           {c.origin === "prepared" && <Badge>Prepared candidate</Badge>}
+          {c.origin === "bob" && <Badge tone="violet">Bob</Badge>}
           {c.origin === "granite" && <Badge tone="blue">Granite</Badge>}
           {c.attempts > 1 && <Badge tone="violet">Revised after failing tests</Badge>}
           {recommended && <Badge tone="green">Recommended</Badge>}

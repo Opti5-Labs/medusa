@@ -64,20 +64,20 @@ Sandbox: run the reproducer against the original code
 BUG GATE ── original code fails? ── no ──► not_reproducible, with reasoning shown. Stop.
   │ yes
   ▼
-Investigators (recorded Bob session if present, else Granite live), given the
-runtime evidence: the failing test, its source and its assertion output
-  ├── Runtime investigator      what fails, with which input
-  ├── Repository investigator   traces that input line by line to the bad return
-  └── Skeptic                   rejects claims about code the failing input never reaches
+Two independent investigators, in parallel, given the same runtime evidence
+(the failing test, its source and its assertion output), never each other's output:
+  ├── IBM Bob (live, read-only)  diagnosis + evidence + 1-2 proposed fixes
+  └── Granite                    runtime and repository investigators → skeptic → synthesis
   │
   ▼
-Root-cause synthesis            must explain the runtime evidence; never edits code
+Both diagnoses shown side by side (confidence displayed, never used to rank)
   │
   ▼
 reproduced
   │
   ▼
-Candidate fixes (2–6, default 4), each a different strategy, from Granite,
+Candidate fixes (2–6, default 4): Bob's own proposals take up to half the slots;
+  the rest come from Granite, each a different strategy,
   given the acceptance criteria a developer would get (failing test + checks that
   must keep passing)
   (full replacement of the target function, spliced in by Medusa); prepared
@@ -161,7 +161,7 @@ There is no runtime investigator here because there is no runtime data.
 
 | Model | Used for | Where |
 |---|---|---|
-| IBM Bob | OptiLearn investigators and synthesis | `agents/bob.py`. `BOB_MODE=replay` on the server (streams `golden/optilearn/investigation.jsonl` when present); `live` for local capture only |
+| IBM Bob | Independent investigator on both paths: diagnosis, evidence and proposed fixes | `agents/bob.py`. `BOB_MODE=live` runs Bob Shell headless (read-only, capped at `BOB_MAX_COST`/`BOB_MAX_TURNS`); `replay` streams a recorded session |
 | Granite on watsonx.ai | Scan, general-repo reasoning, patch proposals, OptiLearn fix candidates, and the OptiLearn investigators until a Bob run is recorded | `agents/granite.py` (REST), `agents/investigators.py`, `agents/fixers.py`. JSON-only prompts validated with Pydantic |
 
 Bob credentials never live on the deployed server.

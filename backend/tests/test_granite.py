@@ -143,3 +143,10 @@ async def test_other_errors_include_watsonx_reason(monkeypatch):
         granite.GraniteError, match="404 \\(project_not_found: no such project\\)"
     ):
         await granite.chat_json("s", "u", _Answer)
+
+
+async def test_non_retryable_failures_keep_their_type(monkeypatch):
+    quota = json.dumps({"errors": [{"code": "token_quota_reached", "message": "x"}]})
+    _install(monkeypatch, [(403, quota)])
+    with pytest.raises(granite.GraniteUnavailable):
+        await granite.chat_json("s", "u", _Answer)

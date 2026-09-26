@@ -192,7 +192,7 @@ async def _get_token(client: httpx.AsyncClient) -> str:
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 
-def _extract_json(text: str) -> object:
+def extract_json(text: str) -> object:
     """Parse the model's reply, tolerating code fences or text around one JSON object."""
     cleaned = _FENCE_RE.sub("", text.strip())
     try:
@@ -293,7 +293,7 @@ async def chat_json(
             try:
                 async with asyncio.timeout(config.GRANITE_TIMEOUT_S):
                     text = await _chat_once(client, system, user, max_tokens)
-                result = schema.model_validate(_extract_json(text))
+                result = schema.model_validate(extract_json(text))
                 _cache_put(key, result)
                 return result.model_copy(deep=True)
             except GraniteRateLimited as exc:
@@ -307,7 +307,9 @@ async def chat_json(
             except GraniteError as exc:
                 last_error = str(exc)
                 if not exc.retryable:
-                    break
+                    raise GraniteUnavailable(
+                        f"Granite call failed: {_scrub(last_error)}."
+                    ) from exc
             except TimeoutError:
                 last_error = f"no answer within {config.GRANITE_TIMEOUT_S} s"
             except httpx.HTTPError as exc:

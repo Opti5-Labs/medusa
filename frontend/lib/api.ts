@@ -45,8 +45,8 @@ async function request<T>(
 
 export type Priority = "Low" | "Medium" | "High";
 export type Mode = "sandboxed" | "reasoning";
-export type InvestigatorSource = "bob_replay" | "granite" | "unavailable";
-export type CandidateOrigin = "granite" | "prepared";
+export type InvestigatorSource = "bob_replay" | "bob" | "granite" | "bob_and_granite" | "unavailable";
+export type CandidateOrigin = "bob" | "granite" | "prepared";
 
 export interface Issue {
   id: string;
@@ -80,6 +80,19 @@ export interface LogEvent {
   message: string;
 }
 
+/** One investigator's independent result. Confidence is self-reported and never ranks patches. */
+export interface InvestigatorReport {
+  investigator: "bob" | "granite";
+  status: "ok" | "unavailable" | "error" | "limit";
+  root_cause: string | null;
+  evidence: string[];
+  confidence: number | null;
+  proposed_fixes: number;
+  error: string | null;
+  cost: number | null;
+  recorded: boolean;
+}
+
 export type ReproStatus = "running" | "reproduced" | "not_reproducible" | "plausible" | "error";
 
 export interface ReproAttempt {
@@ -91,6 +104,7 @@ export interface ReproAttempt {
   root_cause: string | null;
   confidence: number | null;
   investigator_source: InvestigatorSource | null;
+  investigators: InvestigatorReport[];
 }
 
 export interface TestResults {

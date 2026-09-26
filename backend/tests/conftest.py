@@ -48,4 +48,8 @@ def _hermetic_limits(monkeypatch):
     # Never call the real watsonx.ai from tests, even with a local .env.
     monkeypatch.setattr("app.config.WATSONX_API_KEY", "")
     monkeypatch.setattr("app.config.WATSONX_PROJECT_ID", "")
+    # Never run live Bob from tests either (it spends Bobcoins).
+    monkeypatch.setattr("app.config.BOB_API_KEY", "")
+    monkeypatch.setattr("app.config.BOB_MODE", "live")
+    monkeypatch.setattr("app.config.BOB_BINARY", "bob-disabled-in-tests")
     yield

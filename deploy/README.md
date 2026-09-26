@@ -29,6 +29,8 @@ IBM_WATSONX_PROJECT_ID=...
 IBM_WATSONX_URL=https://eu-de.ml.cloud.ibm.com
 IBM_WATSONX_MODEL=ibm/granite-4-h-small
 GITHUB_TOKEN=            # optional
+BOB_API_KEY=...          # optional, Inference-scoped; also install Bob Shell on the host
+BOB_MODE=live            # live | replay | off
 ```
 
 `setup.sh` adds `TRUST_FORWARDED_FOR=true`, `BOB_MODE=replay` and `ALLOWED_ORIGIN` if they are missing.
