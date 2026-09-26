@@ -34,7 +34,8 @@ usermod -aG docker medusa
 install -d -m 750 -o root -g medusa /etc/medusa
 [ -f /etc/medusa/env ] || install -m 640 -o root -g medusa /dev/null /etc/medusa/env
 grep -q '^TRUST_FORWARDED_FOR=' /etc/medusa/env || echo 'TRUST_FORWARDED_FOR=true' >> /etc/medusa/env
-grep -q '^BOB_MODE=' /etc/medusa/env || echo 'BOB_MODE=replay' >> /etc/medusa/env
+# Same default as the code: live Bob (it reports itself unavailable without BOB_API_KEY).
+grep -q '^BOB_MODE=' /etc/medusa/env || echo 'BOB_MODE=live' >> /etc/medusa/env
 if ! grep -q '^ALLOWED_ORIGIN=' /etc/medusa/env; then
   if [ "$SERVER_NAME" != "_" ]; then echo "ALLOWED_ORIGIN=https://$SERVER_NAME" >> /etc/medusa/env; fi
 fi

@@ -63,7 +63,7 @@ Everything runs on one AWS EC2 instance: nginx serves the frontend and proxies `
 ### Key design decisions
 
 - **One execution path.** Only the OptiLearn demo runs code. General repos are analysed, never executed. One sandbox to harden and rehearse, and no untrusted builds on a public URL.
-- **Bob replay on the deployed site.** The real Bob investigator run is captured once and replayed on the public demo, labelled as a recorded session. The sandbox reproduction and fix tests still execute live. This protects the 40-Bobcoin budget and keeps Bob credentials off the server.
+- **Bob live on the deployed site** (changed from the original replay plan). Bob Shell runs headless on the server as an independent investigator, read-only and capped at `BOB_MAX_COST` (0.25 Bobcoins) and `BOB_MAX_TURNS` (6) per run, with a 6-hour answer cache and per-IP rate limits. `BOB_MODE=replay` can still stream a recorded session from `golden/optilearn/investigation.jsonl`, but only a real captured run may go there.
 - **Honest outputs.** Reasoning-only results are never presented as reproduced or tested. A clean "could not reproduce" is a valid result, not a failure to hide.
 - **Stateless by design.** No database, no accounts, no GitHub write access.
 
@@ -146,7 +146,7 @@ Screenshot naming: `Medusa_task01_init_agents.png`, `Medusa_task02_sandbox_runne
 
 | Risk                                               | Fallback                                                                                           |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Bobcoins run out                                   | Replay mode is the default; capture the golden run by H8                                           |
+| Bobcoins run out                                   | Per-run cost/turn caps, answer cache and rate limits; set `BOB_MODE=replay` with a real captured run, or `off` (Granite and prepared candidates carry on) |
 | Granite slow or rate-limited                       | Cap chunks; cache the demo repo's scan result                                                      |
 | Sandbox flaky on EC2                               | Rehearse on EC2 by H16; keep a recorded run for the video                                          |
 | GitHub API rate limit                              | `GITHUB_TOKEN` (fine-grained, no scopes)                                                           |
