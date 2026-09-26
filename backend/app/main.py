@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import architecture as architecture_router
 from app.api import ask as ask_router
 from app.api import health as health_router
 from app.api import runs as runs_router
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
     scan_router.set_store(store)
     runs_router.set_store(store)
     ask_router.set_store(store)
+    architecture_router.set_store(store)
     log.info("Medusa started — store TTL sweeper running")
     yield
     await store.stop()
@@ -65,3 +67,4 @@ app.include_router(health_router.router)
 app.include_router(scan_router.router)
 app.include_router(runs_router.router)
 app.include_router(ask_router.router)
+app.include_router(architecture_router.router)

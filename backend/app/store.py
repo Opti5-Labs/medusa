@@ -1,10 +1,12 @@
 """
 In-memory run store with TTL sweeper and temp-dir lifecycle.
 
-Holds three kinds of record, all deleted after RUN_TTL_SECONDS:
-    scans        scan_id    -> ScanRecord  (result, extracted tree, issue index)
-    repro runs   attempt_id -> ReproRun
-    debug runs   session_id -> DebugRun
+Holds five kinds of record, all deleted after RUN_TTL_SECONDS:
+    scans          scan_id        -> ScanRecord  (result, extracted tree, issue index)
+    repro runs     attempt_id     -> ReproRun
+    debug runs     session_id     -> DebugRun
+    ask runs       ask_id         -> AskRun
+    architecture   architecture_id -> ArchitectureRun
 
 Usage:
     store = RunStore()
@@ -26,6 +28,7 @@ from typing import Any
 from app import config
 from app.config import RUN_TTL_SECONDS
 from app.models.contracts import (
+    ArchitectureReport,
     AskAnswer,
     DebugSession,
     Issue,
@@ -58,6 +61,9 @@ class ScanRecord:
     root: Path | None = None  # extracted repo root, read as text only
     scenarios: dict[str, str] = field(default_factory=dict)  # issue_id -> demo scenario
     history: list[tuple[str, str]] = field(default_factory=list)  # (question, answer)
+    # Set once an architecture report has been started for this scan, so a
+    # repeated request reuses it instead of re-running the pipeline.
+    architecture_id: str | None = None
     created_at: float = field(default_factory=time.monotonic)
 
     def is_expired(self) -> bool:
@@ -106,6 +112,16 @@ class AskRun:
     created_at: float = field(default_factory=time.monotonic)
 
 
+@dataclass
+class ArchitectureRun:
+    report: ArchitectureReport
+    channel: EventChannel
+    task: asyncio.Task | None = None
+    created_at: float = field(default_factory=time.monotonic)
+    # Owns no temp dir: the pipeline only reads ScanRecord.root, which the
+    # scan record itself owns and deletes.
+
+
 class RunStore:
     def __init__(self) -> None:
         self._records: OrderedDict[str, ScanRecord] = OrderedDict()
@@ -113,6 +129,7 @@ class RunStore:
         self.repro_runs: dict[str, ReproRun] = {}
         self.debug_runs: dict[str, DebugRun] = {}
         self.ask_runs: dict[str, AskRun] = {}
+        self.arch_runs: dict[str, ArchitectureRun] = {}
         self._lock = asyncio.Lock()
         self._sweeper_task: asyncio.Task | None = None
 
@@ -134,6 +151,7 @@ class RunStore:
             *self.repro_runs.values(),
             *self.debug_runs.values(),
             *self.ask_runs.values(),
+            *self.arch_runs.values(),
         ]:
             if run.task and not run.task.done():
                 run.task.cancel()
@@ -217,7 +235,8 @@ class RunStore:
     # ── Runs ───────────────────────────────────────────────────────────────────
 
     def _check_run_capacity(self) -> None:
-        if len(self.repro_runs) + len(self.debug_runs) >= _MAX_RUNS:
+        total = len(self.repro_runs) + len(self.debug_runs) + len(self.arch_runs)
+        if total >= _MAX_RUNS:
             raise StoreFullError(
                 "Server is busy with too many active runs. Please try again shortly."
             )
@@ -229,6 +248,10 @@ class RunStore:
     def add_debug(self, run: DebugRun) -> None:
         self._check_run_capacity()
         self.debug_runs[run.session.session_id] = run
+
+    def add_architecture(self, run: ArchitectureRun) -> None:
+        self._check_run_capacity()
+        self.arch_runs[run.report.architecture_id] = run
 
     def latest_repro_for(self, issue_id: str) -> ReproRun | None:
         runs = [r for r in self.repro_runs.values() if r.attempt.issue_id == issue_id]
@@ -259,7 +282,7 @@ class RunStore:
         runs = [r for r in self.debug_runs.values() if r.session.issue_id == issue_id]
         return max(runs, key=lambda r: r.created_at) if runs else None
 
-    def _drop_run(self, run: ReproRun | DebugRun | AskRun) -> None:
+    def _drop_run(self, run: ReproRun | DebugRun | AskRun | ArchitectureRun) -> None:
         if run.task and not run.task.done():
             run.task.cancel()
         if isinstance(run, DebugRun) and run.tmp_dir and run.tmp_dir.exists():
@@ -283,7 +306,12 @@ class RunStore:
             await self.delete(sid)
 
         cutoff = time.monotonic() - RUN_TTL_SECONDS
-        for runs in (self.repro_runs, self.debug_runs, self.ask_runs):
+        for runs in (
+            self.repro_runs,
+            self.debug_runs,
+            self.ask_runs,
+            self.arch_runs,
+        ):
             for run_id in [k for k, r in runs.items() if r.created_at < cutoff]:
                 self._drop_run(runs.pop(run_id))
 

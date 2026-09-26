@@ -1,0 +1,273 @@
+{
+  "summary": "OptiLearn is a self-hosted, offline-first tutoring platform: a FastAPI server and a local Ollama model serve a React PWA to student devices over a teacher laptop's Wi-Fi hotspot, with SQLite and FAISS for storage and an optional Electron desktop shell. This curated architecture highlights the modules bundled in Medusa's sandboxed demo (configuration, grading, the SQLite data layer, model routing, the Whisper voice pipeline — where the demo's bug lives — caching, and telemetry) alongside the upstream components they fit into.",
+  "technology_stack": {
+    "languages": ["Python", "JavaScript"],
+    "frameworks": ["FastAPI", "React", "Electron", "Vite"],
+    "build_systems": ["Vite"],
+    "package_managers": ["pip", "npm"],
+    "test_frameworks": ["pytest"],
+    "unsupported_languages": []
+  },
+  "entrypoints": [
+    {
+      "path": "app/main.py",
+      "kind": "http_server",
+      "detail": "FastAPI app entrypoint served by uvicorn (upstream path; not part of the bundled sandbox subset).",
+      "evidence": [
+        {"path": "app/main.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/main.py"}
+      ]
+    },
+    {
+      "path": "desktop/electron/main.js",
+      "kind": "container",
+      "detail": "Electron main process that spawns the FastAPI server as a child process on launch (upstream path).",
+      "evidence": [
+        {"path": "desktop/electron/main.js", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/desktop/electron/main.js"}
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "desktop_shell",
+      "label": "Desktop shell (Electron)",
+      "type": "infrastructure",
+      "description": "Optional Electron wrapper: first-launch setup wizard, system tray, and a loading window that polls /api/health while it spawns the FastAPI server as a child process. Not part of the bundled sandbox subset.",
+      "paths": ["desktop/electron/main.js", "desktop/electron/preload.js"],
+      "evidence": [
+        {"path": "desktop/electron/main.js", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/desktop/electron/main.js", "note": "Electron main process"}
+      ],
+      "confidence": 0.7,
+      "assisted_by": "deterministic",
+      "file_count": 0,
+      "rank": 0.9
+    },
+    {
+      "id": "network_layer",
+      "label": "Network layer (mDNS / captive portal)",
+      "type": "infrastructure",
+      "description": "mDNS advertisement, captive-portal DNS that redirects all LAN HTTP traffic to the server, QR-code enrollment, and the self-signed TLS certificate that enables microphone access over HTTPS. Not part of the bundled sandbox subset.",
+      "paths": ["app/services/network.py", "app/services/dns_server.py"],
+      "evidence": [
+        {"path": "app/services/dns_server.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/services/dns_server.py", "note": "captive portal DNS"}
+      ],
+      "confidence": 0.6,
+      "assisted_by": "deterministic",
+      "file_count": 0,
+      "rank": 0.6
+    },
+    {
+      "id": "react_frontend",
+      "label": "React frontend (student & teacher UI)",
+      "type": "frontend",
+      "description": "Vite-built React PWA: student screens (tutor chat, live translation, quizzes, progress) and teacher screens (dashboard, quiz builder, live class hosting), talking to the server over REST, SSE and WebSocket. Not part of the bundled sandbox subset.",
+      "paths": ["frontend/src/App.jsx", "frontend/src"],
+      "evidence": [
+        {"path": "frontend/src/App.jsx", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/frontend/src/App.jsx", "note": "router and auth context"}
+      ],
+      "confidence": 0.7,
+      "assisted_by": "deterministic",
+      "file_count": 0,
+      "rank": 1.0
+    },
+    {
+      "id": "fastapi_server",
+      "label": "FastAPI server & routing",
+      "type": "api_layer",
+      "description": "The uvicorn-served FastAPI app: CORS and captive-portal middleware plus route modules for auth, chat, translation, quizzes, materials, personas, teacher tools and network status. Not part of the bundled sandbox subset (the demo bundles only the services it calls into, below).",
+      "paths": ["app/main.py", "app/api/routes"],
+      "evidence": [
+        {"path": "app/main.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/main.py", "note": "app entrypoint and router registration"}
+      ],
+      "confidence": 0.7,
+      "assisted_by": "deterministic",
+      "file_count": 0,
+      "rank": 1.2
+    },
+    {
+      "id": "configuration",
+      "label": "Configuration",
+      "type": "config",
+      "description": "Centralised pydantic-settings configuration: model paths and fallback thresholds, feature flags, and connection settings read by most other components. Bundled in the sandboxed demo.",
+      "paths": ["app/core/config.py"],
+      "evidence": [
+        {"path": "app/core/config.py", "verified": true, "note": "Settings class"}
+      ],
+      "confidence": 0.95,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 1.1
+    },
+    {
+      "id": "grading",
+      "label": "Grading",
+      "type": "service",
+      "description": "Scoring and grading logic for quizzes and assignments. Bundled in the sandboxed demo.",
+      "paths": ["app/core/grades.py"],
+      "evidence": [
+        {"path": "app/core/grades.py", "verified": true, "note": "grading functions"}
+      ],
+      "confidence": 0.9,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 0.5
+    },
+    {
+      "id": "data_layer",
+      "label": "Data layer (SQLite)",
+      "type": "data_store",
+      "description": "aiosqlite-backed persistence for students, sessions, messages, mastery scores, quiz results, teachers, cache entries and materials. Bundled in the sandboxed demo.",
+      "paths": ["app/services/db.py"],
+      "evidence": [
+        {"path": "app/services/db.py", "verified": true, "note": "schema and query functions"}
+      ],
+      "confidence": 0.9,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 1.0
+    },
+    {
+      "id": "model_routing",
+      "label": "Model routing & scheduler",
+      "type": "service",
+      "description": "Routes AI requests to priority lanes: the local Ollama model always serves the tutor-chat lane, while translation/admin lanes prefer the cloud model when online and fall back to the local model through a circuit breaker. The scheduler is bundled in the sandboxed demo; the router itself (model_client.py) is not.",
+      "paths": ["app/services/model_scheduler.py", "app/services/model_client.py"],
+      "evidence": [
+        {"path": "app/services/model_scheduler.py", "verified": true, "note": "priority lane scheduler"},
+        {"path": "app/services/model_client.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/services/model_client.py", "note": "AI router / circuit breaker"}
+      ],
+      "confidence": 0.85,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 1.0
+    },
+    {
+      "id": "voice_pipeline",
+      "label": "Voice pipeline (Whisper ASR)",
+      "type": "service",
+      "description": "Speech-to-text for live class translation via a local Whisper model, plus text-to-speech via Piper/MMS-TTS. This is where the demo's reproducible bug lives: _resolve_hf_asr_model() in whisper_client.py. The ASR client is bundled in the sandboxed demo; the TTS client is not.",
+      "paths": ["app/services/whisper_client.py", "app/services/tts_client.py"],
+      "evidence": [
+        {"path": "app/services/whisper_client.py", "verified": true, "note": "_resolve_hf_asr_model, the demo's target function"},
+        {"path": "app/services/tts_client.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/services/tts_client.py", "note": "Piper / MMS-TTS client"}
+      ],
+      "confidence": 0.9,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 1.1
+    },
+    {
+      "id": "caching",
+      "label": "Caching",
+      "type": "service",
+      "description": "Caches generated translations and notes to avoid recomputing expensive model calls. Bundled in the sandboxed demo.",
+      "paths": ["app/services/generated_cache.py"],
+      "evidence": [
+        {"path": "app/services/generated_cache.py", "verified": true, "note": "cache read/write functions"}
+      ],
+      "confidence": 0.9,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 0.5
+    },
+    {
+      "id": "telemetry",
+      "label": "Telemetry",
+      "type": "service",
+      "description": "Structured logging of requests and AI calls for tracing and diagnostics. Bundled in the sandboxed demo.",
+      "paths": ["app/services/telemetry.py"],
+      "evidence": [
+        {"path": "app/services/telemetry.py", "verified": true, "note": "trace logging"}
+      ],
+      "confidence": 0.9,
+      "assisted_by": "deterministic",
+      "file_count": 1,
+      "rank": 0.5
+    },
+    {
+      "id": "agent_tools",
+      "label": "Agent tools",
+      "type": "service",
+      "description": "Tools dispatched during tutor-chat inference: language detection, FAISS curriculum retrieval, structured quiz generation, and EMA mastery updates written back to the database. Not part of the bundled sandbox subset.",
+      "paths": ["app/tools/agent_tools.py"],
+      "evidence": [
+        {"path": "app/tools/agent_tools.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/tools/agent_tools.py", "note": "tool dispatch"}
+      ],
+      "confidence": 0.6,
+      "assisted_by": "deterministic",
+      "file_count": 0,
+      "rank": 0.7
+    }
+  ],
+  "relationships": [
+    {"source": "desktop_shell", "target": "fastapi_server", "type": "deploys", "explanation": "The Electron main process spawns the FastAPI server as a child process on launch and polls /api/health until it is ready.", "evidence": [{"path": "desktop/electron/main.js", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/desktop/electron/main.js"}], "confidence": 0.7, "assisted_by": "deterministic"},
+    {"source": "network_layer", "target": "fastapi_server", "type": "serves", "explanation": "Captive-portal DNS and mDNS route all LAN HTTP traffic on student devices to the FastAPI server.", "evidence": [{"path": "app/services/dns_server.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/services/dns_server.py"}], "confidence": 0.6, "assisted_by": "deterministic"},
+    {"source": "react_frontend", "target": "fastapi_server", "type": "calls", "explanation": "The SPA talks to the server over REST, SSE and WebSocket on ports 8000/8443.", "evidence": [{"path": "frontend/src/App.jsx", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/frontend/src/App.jsx"}], "confidence": 0.7, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "configuration", "type": "depends_on", "explanation": "Routes and services read connection, model-path and feature settings from the configuration module.", "evidence": [{"path": "app/core/config.py", "verified": true}], "confidence": 0.85, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "grading", "type": "calls", "explanation": "Quiz and assignment routes delegate scoring to the grading module.", "evidence": [{"path": "app/core/grades.py", "verified": true}], "confidence": 0.7, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "data_layer", "type": "persists_to", "explanation": "Most routes read and write student, session, message and quiz state through the SQLite data layer.", "evidence": [{"path": "app/services/db.py", "verified": true}], "confidence": 0.85, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "voice_pipeline", "type": "calls", "explanation": "The live-translation route sends audio to the Whisper ASR client and text to the TTS client.", "evidence": [{"path": "app/services/whisper_client.py", "verified": true}], "confidence": 0.75, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "caching", "type": "calls", "explanation": "Generated translations and notes are cached to avoid recomputing expensive model calls.", "evidence": [{"path": "app/services/generated_cache.py", "verified": true}], "confidence": 0.7, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "telemetry", "type": "calls", "explanation": "Requests and AI calls are logged through the telemetry module for tracing.", "evidence": [{"path": "app/services/telemetry.py", "verified": true}], "confidence": 0.7, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "model_routing", "type": "calls", "explanation": "Chat and translation routes send prompts through the AI router and scheduler.", "evidence": [{"path": "app/services/model_scheduler.py", "verified": true}], "confidence": 0.8, "assisted_by": "deterministic"},
+    {"source": "fastapi_server", "target": "agent_tools", "type": "calls", "explanation": "The tutor-chat route dispatches agent tools during inference.", "evidence": [{"path": "app/tools/agent_tools.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/tools/agent_tools.py"}], "confidence": 0.6, "assisted_by": "deterministic"},
+    {"source": "agent_tools", "target": "data_layer", "type": "persists_to", "explanation": "The progress-update tool writes EMA mastery scores back to the database.", "evidence": [{"path": "app/services/db.py", "verified": true}], "confidence": 0.6, "assisted_by": "deterministic"},
+    {"source": "agent_tools", "target": "model_routing", "type": "depends_on", "explanation": "The quiz-generation tool asks the AI router for structured JSON output.", "evidence": [{"path": "app/services/model_scheduler.py", "verified": true}], "confidence": 0.55, "assisted_by": "deterministic"},
+    {"source": "voice_pipeline", "target": "configuration", "type": "depends_on", "explanation": "The ASR client reads model-path and fallback settings from configuration — this is exactly the setting the demo's bug misreads.", "evidence": [{"path": "app/core/config.py", "verified": true}], "confidence": 0.8, "assisted_by": "deterministic"},
+    {"source": "model_routing", "target": "configuration", "type": "depends_on", "explanation": "The scheduler reads lane assignments and fallback thresholds from configuration.", "evidence": [{"path": "app/core/config.py", "verified": true}], "confidence": 0.75, "assisted_by": "deterministic"}
+  ],
+  "external_services": [
+    {
+      "name": "Google Gemini API",
+      "detail": "Cloud fallback model (Gemma 4 26B) used for translation/admin lanes when the circuit breaker reports the connection healthy. Not part of the bundled sandbox subset.",
+      "evidence": [{"path": "app/services/model_client.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/services/model_client.py"}],
+      "confidence": 0.6,
+      "assisted_by": "deterministic"
+    },
+    {
+      "name": "Beyond Presence API",
+      "detail": "Avatar personas for the persona feature. Not part of the bundled sandbox subset.",
+      "evidence": [{"path": "app/api/routes/persona.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/api/routes/persona.py"}],
+      "confidence": 0.5,
+      "assisted_by": "deterministic"
+    }
+  ],
+  "data_stores": [
+    {
+      "name": "SQLite database",
+      "kind": "relational",
+      "detail": "Students, sessions, messages, mastery, quiz results, teachers, cache and materials. Bundled in the sandboxed demo.",
+      "evidence": [{"path": "app/services/db.py", "verified": true}],
+      "confidence": 0.9,
+      "assisted_by": "deterministic"
+    },
+    {
+      "name": "FAISS curriculum index",
+      "kind": "vector",
+      "detail": "MiniLM-L12 embeddings over curriculum passages, used for retrieval-augmented tutoring. Not part of the bundled sandbox subset.",
+      "evidence": [{"path": "app/services/faiss_store.py", "verified": false, "url": "https://github.com/Ilakiancs/OptiLearn/blob/main/app/services/faiss_store.py"}],
+      "confidence": 0.6,
+      "assisted_by": "deterministic"
+    },
+    {
+      "name": "Local model & asset files",
+      "kind": "file",
+      "detail": "On-disk Whisper/Piper model weights, voice files and fonts referenced by local-path settings.",
+      "evidence": [{"path": "app/services/whisper_client.py", "verified": true}],
+      "confidence": 0.6,
+      "assisted_by": "deterministic"
+    }
+  ],
+  "deployment": [
+    {
+      "kind": "other",
+      "path": "desktop/electron/main.js",
+      "detail": "Electron packaging for the desktop app (upstream path; not part of the bundled sandbox subset). Medusa itself runs this demo's checks in a separate Docker sandbox image, not via Electron — see sandbox/optilearn/Dockerfile in this repository.",
+      "services": []
+    }
+  ],
+  "limitations": [
+    "This diagram describes the upstream OptiLearn project (github.com/Ilakiancs/OptiLearn) in full. Medusa's sandboxed demo bundles only a small subset of it (app/core/config.py, app/core/grades.py, and five modules under app/services/). Components and evidence marked unverified point to the upstream repository, not to files present in this Medusa checkout.",
+    "Counts in the full detail diagram (e.g. '17 route modules', '8 SQLite tables') come from the hand-authored upstream diagram and may drift from the current upstream repository over time.",
+    "This is a curated, hand-authored architecture, not one inferred from this repository's own source — see 'source: curated' and the OptiLearn README in golden/ for provenance."
+  ]
+}
