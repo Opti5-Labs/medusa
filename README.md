@@ -4,19 +4,32 @@
 
 IBM Bob 2.0 Hackathon entry (lablab.ai, 25–27 Sep 2026). Design: [architecture.md](architecture.md).
 
-Medusa scans a codebase for issues, reproduces a chosen issue, races several candidate
-fixes in parallel sandboxes and recommends one based on test evidence.
+Medusa scans a codebase for issues, reproduces a chosen issue, races candidate fixes in
+parallel sandboxes and recommends one based on test evidence.
 
 - **OptiLearn demo (verified):** a real bug in OptiLearn's Whisper fallback. The reproducer and
   every candidate fix run live in locked-down Docker containers; the recommendation is chosen
   deterministically from the results, and the fixed code can be downloaded.
-- **Any public GitHub repo or zip (analysis only):** Granite reads the code as text, lists issues,
-  diagnoses one with file/line citations and proposes patches. Nothing is executed, and the UI
+- **Any public GitHub repo or zip (analysis only):** the code is read as text, issues are listed
+  with file and line, one is diagnosed and patches are proposed. Nothing is executed, and the UI
   says so.
+
+Two independent investigators, one judge:
+
+| Role | What it does |
+| --- | --- |
+| IBM Bob (Bob Shell, headless) | Diagnoses the failure, proposes fixes; scans code when Granite is unavailable. Read-only, capped by `BOB_MAX_COST` / `BOB_MAX_TURNS`. |
+| Granite on watsonx.ai | Scans code in chunks; runs its own runtime / repository / skeptic investigation. |
+| Sandbox + `pipelines/verify.py` | Reproduces the bug and tests every fix. Decides what works; model confidence never does. |
+
+If either model is unavailable (not configured, quota used up, auth failure, cost or turn limit),
+the other carries on and the UI shows the real reason. With neither, prepared fix candidates are
+used and labelled as prepared.
 
 ## Running locally
 
-Needs Python 3.12+, Node 22+ and Docker.
+Needs Python 3.12+, Node 22.15+ and Docker. For Bob, install Bob Shell:
+`curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash`
 
 ```bash
 # Sandbox image (needed for the OptiLearn demo)
@@ -26,7 +39,7 @@ docker build -t medusa-optilearn:latest sandbox/optilearn
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # fill in IBM_WATSONX_* (optional: without it, no Granite features)
+cp .env.example .env        # fill in IBM_WATSONX_* and BOB_API_KEY (each optional)
 uvicorn app.main:app --reload --port 8000
 
 # Frontend (second terminal)
@@ -50,7 +63,8 @@ medusa/
 ├── backend/app/
 │   ├── api/            scan.py, runs.py (repro, debug, SSE, download), health.py
 │   ├── pipelines/      scan.py (Granite chunks), repro.py, debug.py, verify.py, context.py
-│   ├── agents/         granite.py (watsonx REST), investigators.py, fixers.py, bob.py (replay)
+│   ├── agents/         bob.py (Bob Shell), granite.py (watsonx REST), panel.py (runs both),
+│   │                   results.py (shared result shape), investigators.py, fixers.py
 │   ├── sandbox/        runner.py — the only place code executes
 │   ├── demo/           OptiLearn scenario and demo scan fixture
 │   ├── ingest/         GitHub tarball + zip ingest with limits and safe extraction

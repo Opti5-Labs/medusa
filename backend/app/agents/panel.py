@@ -67,9 +67,9 @@ async def _announce(channel: EventChannel, result: InvestigatorResult) -> None:
     name = "Bob" if result.investigator == "bob" else "Granite"
     src = result.investigator
     if result.status == "ok":
-        cost = f" · {result.cost} Bobcoins" if result.cost is not None else ""
+        cost = f", {result.cost} Bobcoins" if result.cost is not None else ""
         conf = (
-            f" · self-reported confidence {result.confidence:.2f}"
+            f" (self-reported confidence {result.confidence:.2f})"
             if result.confidence is not None
             else ""
         )

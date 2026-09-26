@@ -48,9 +48,9 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
       <div className="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-500">
         {issue.file && (
           <span>
-            📄 <code className="font-mono">{issue.file}{issue.line ? `:${issue.line}` : ""}</code>
+            <code className="font-mono">{issue.file}{issue.line ? `:${issue.line}` : ""}</code>
             {issue.function && (
-              <> · <code className="font-mono">{issue.function}()</code></>
+              <>, <code className="font-mono">{issue.function}()</code></>
             )}
           </span>
         )}
@@ -61,7 +61,7 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
             rel="noopener noreferrer"
             className="text-blue-600 dark:text-blue-400 hover:underline"
           >
-            View on GitHub →
+            View on GitHub
           </a>
         )}
       </div>
@@ -77,7 +77,7 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
             href={`/investigate/${issue.id}?scan=${scanId}&action=${action}`}
             className={`text-xs px-3 py-1 rounded border transition-colors ${
               action === "both"
-                ? "border-gray-900 bg-gray-900 text-white dark:border-white dark:bg-white dark:text-gray-900 hover:opacity-90"
+                ? "border-verdigris-600 bg-verdigris-600 text-white hover:bg-verdigris-700 hover:border-verdigris-700"
                 : "border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
             }`}
           >
@@ -147,24 +147,33 @@ function IssuesContent() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="space-y-1">
-        <h2 className="text-2xl font-semibold">Issues</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Source: <span className="font-medium">{sourceLabel[result.repo_source] ?? result.repo_source}</span>
-          {" · "}Language: <span className="font-medium">{result.language}</span>
-          {" · "}
-          <span className="font-medium">{result.files_scanned.length}</span> of{" "}
-          <span className="font-medium">{result.files_total}</span> files analysed
-        </p>
+      <div className="space-y-3">
+        <h2 className="text-2xl font-semibold tracking-tight">Issues</h2>
+        <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+          <div>
+            <dt className="text-gray-500 dark:text-gray-400">Source</dt>
+            <dd className="font-medium">{sourceLabel[result.repo_source] ?? result.repo_source}</dd>
+          </div>
+          <div>
+            <dt className="text-gray-500 dark:text-gray-400">Language</dt>
+            <dd className="font-medium">{result.language}</dd>
+          </div>
+          <div>
+            <dt className="text-gray-500 dark:text-gray-400">Files analysed</dt>
+            <dd className="font-medium">
+              {result.files_scanned.length} of {result.files_total}
+            </dd>
+          </div>
+        </dl>
       </div>
 
       {/* Warnings */}
       {result.warnings.length > 0 && (
-        <div className="rounded-lg border border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/10 p-4 space-y-1">
-          <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-300">Notices</p>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/10 p-4 space-y-1">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">Notices</p>
           <ul className="list-disc list-inside space-y-1">
             {result.warnings.map((w, i) => (
-              <li key={i} className="text-sm text-yellow-700 dark:text-yellow-400">
+              <li key={i} className="text-sm text-amber-800 dark:text-amber-400">
                 {w}
               </li>
             ))}
@@ -183,7 +192,7 @@ function IssuesContent() {
           onClick={() => router.push("/")}
           className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
         >
-          ← New scan
+          New scan
         </button>
       </div>
 

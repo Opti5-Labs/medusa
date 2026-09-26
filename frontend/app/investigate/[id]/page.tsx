@@ -243,9 +243,9 @@ function Investigate() {
   const reproduced = state.repro.attempt?.status === "reproduced";
 
   return (
-    <div className="space-y-8">
-      <Link href={`/issues?scan=${scan.scan_id}`} className="text-sm text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
-        ← Back to issues
+    <div className="space-y-6">
+      <Link href={`/issues?scan=${scan.scan_id}`} className="inline-block text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
+        Back to issues
       </Link>
 
       {/* Issue */}
@@ -261,7 +261,7 @@ function Investigate() {
           <p className="text-xs text-gray-500 font-mono">
             {issue.file}
             {issue.line ? `:${issue.line}` : ""}
-            {issue.function ? ` · ${issue.function}()` : ""}
+            {issue.function ? `, ${issue.function}()` : ""}
           </p>
         )}
       </section>
@@ -292,7 +292,7 @@ function Investigate() {
         <button
           onClick={() => run("both")}
           disabled={running}
-          className="px-4 py-2 rounded-lg bg-gray-900 text-white dark:bg-white dark:text-gray-900 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+          className="px-4 py-2 rounded-lg bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 text-sm font-medium disabled:opacity-50"
         >
           Reproduce and Debug
         </button>

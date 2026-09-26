@@ -126,7 +126,7 @@ export default function CandidatePanel({ candidate: c, mode, log, recommended, f
       {finished && downloadUrl && (
         <a
           href={downloadUrl}
-          className="inline-block text-xs px-3 py-1.5 rounded-md bg-gray-900 text-white dark:bg-white dark:text-gray-900 font-medium hover:opacity-90"
+          className="inline-block text-xs px-3 py-1.5 rounded-md bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 font-medium"
         >
           Download fixed code (.zip)
         </a>

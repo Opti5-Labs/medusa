@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useRef } from "react";
 import { postScan, ScanResult } from "../../../lib/api";
@@ -9,6 +10,8 @@ const GITHUB_URL_RE =
   /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*(\.git|\/)?$/;
 
 type Stage = "idle" | "scanning" | "done";
+
+const EXAMPLES = ["https://github.com/pallets/itsdangerous", "https://github.com/pallets/markupsafe"];
 
 export default function ScanGitHubPage() {
   const router = useRouter();
@@ -65,9 +68,14 @@ export default function ScanGitHubPage() {
   return (
     <div className="max-w-lg space-y-6">
       <div className="space-y-1">
-        <h2 className="text-2xl font-semibold">Link a GitHub repository</h2>
+        <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
+          Back
+        </Link>
+        <h2 className="text-2xl font-semibold tracking-tight pt-2">Link a GitHub repository</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Scans a public repository. The code is read as text only — nothing is executed.
+          Medusa reviews a public repository&apos;s code and open GitHub Issues. The code is read
+          as text and never executed, so results are analysis, not test runs. Link a folder with
+          /tree/main/src to scan part of a large repository.
         </p>
       </div>
 
@@ -101,12 +109,31 @@ export default function ScanGitHubPage() {
               {urlError}
             </p>
           )}
+          <p className="text-xs text-gray-500 dark:text-gray-400 pt-1">
+            Try{" "}
+            {EXAMPLES.map((example, i) => (
+              <span key={example}>
+                {i > 0 && " or "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUrl(example);
+                    setUrlError(null);
+                  }}
+                  disabled={stage === "scanning"}
+                  className="font-mono text-verdigris-700 dark:text-verdigris-300 hover:underline"
+                >
+                  {example.replace("https://github.com/", "")}
+                </button>
+              </span>
+            ))}
+          </p>
         </div>
 
         {/* Stage text */}
         {stage === "scanning" && (
           <p className="text-sm text-gray-500 dark:text-gray-400 animate-pulse">
-            Downloading and scanning repository…
+            Downloading the repository, then reviewing the code. This can take up to 90 seconds.
           </p>
         )}
 
@@ -121,7 +148,7 @@ export default function ScanGitHubPage() {
           <button
             type="submit"
             disabled={stage === "scanning" || !url.trim()}
-            className="px-5 py-2 rounded-lg bg-gray-900 text-white dark:bg-white dark:text-gray-900 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-5 py-2 rounded-lg bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 text-sm font-medium transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {stageText[stage]}
           </button>

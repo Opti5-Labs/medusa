@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useCallback } from "react";
 import { postScanUpload, ScanResult } from "../../../lib/api";
@@ -84,9 +85,12 @@ export default function ScanUploadPage() {
   return (
     <div className="max-w-lg space-y-6">
       <div className="space-y-1">
-        <h2 className="text-2xl font-semibold">Upload a zip</h2>
+        <Link href="/" className="text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100">
+          Back
+        </Link>
+        <h2 className="text-2xl font-semibold tracking-tight pt-2">Upload a zip</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Upload a zip of your codebase (max {MAX_ZIP_MB} MB). The code is read as text only — nothing is executed.
+          Upload a zip of your codebase, up to {MAX_ZIP_MB} MB and 2,000 files. The code is read as text and never executed, so results are analysis, not test runs.
         </p>
       </div>
 
@@ -141,7 +145,7 @@ export default function ScanUploadPage() {
 
         {stage === "uploading" && (
           <p className="text-sm text-gray-500 dark:text-gray-400 animate-pulse">
-            Uploading and scanning…
+            Uploading, then reviewing the code. This can take up to 90 seconds.
           </p>
         )}
 
@@ -155,7 +159,7 @@ export default function ScanUploadPage() {
           <button
             type="submit"
             disabled={!file || !!fileError || stage === "uploading"}
-            className="px-5 py-2 rounded-lg bg-gray-900 text-white dark:bg-white dark:text-gray-900 text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-5 py-2 rounded-lg bg-verdigris-600 text-white hover:bg-verdigris-700 dark:bg-verdigris-600 dark:hover:bg-verdigris-700 text-sm font-medium transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {stage === "uploading" ? "Scanning…" : "Scan zip"}
           </button>
