@@ -178,16 +178,36 @@ async def test_reproduce_then_verify_a_fix_end_to_end(tmp_path, monkeypatch):
     prep = await pyexec.prepare(tmp_path, _noop)
     assert prep.env is not None, prep.error
     try:
-        before = await pyexec.run_tests(prep.env, tmp_path, _noop, repro_test=_REPRO)
+        before = await pyexec.run_tests(prep.env, _noop, repro_test=_REPRO)
         assert before.repro_outcome == "failed"  # the bug reproduces
         assert before.suite.passed == 1  # existing test passes on the original
 
-        after = await pyexec.run_tests(
-            prep.env, tmp_path, _noop, patch=_FIX, repro_test=_REPRO
-        )
+        after = await pyexec.run_tests(prep.env, _noop, patch=_FIX, repro_test=_REPRO)
         assert after.patch_applied is True
         assert after.repro_outcome == "passed"  # the fix works
         assert after.suite.failed == 0  # no regression
     finally:
         await pyexec.release(prep.env)
     await asyncio.sleep(0)
+
+
+def test_snapshot_is_readable_by_the_sandbox_user_and_keeps_symlinks(tmp_path):
+    import shutil
+
+    src = tmp_path / "repo"
+    (src / "pkg").mkdir(parents=True)
+    (src / "pkg" / "mod.py").write_text("x = 1\n")
+    (src / "link").symlink_to("/etc/passwd")
+    (src / "pkg" / "mod.py").chmod(0o600)
+    (src / "pkg").chmod(0o700)
+    src.chmod(0o700)
+
+    snap = pyexec._snapshot(src)
+    try:
+        assert snap.stat().st_mode & 0o777 == 0o755
+        assert (snap / "pkg").stat().st_mode & 0o777 == 0o755
+        assert (snap / "pkg" / "mod.py").stat().st_mode & 0o777 == 0o644
+        assert (snap / "link").is_symlink()  # copied as a link, never followed
+        assert (snap / "link").readlink() == Path("/etc/passwd")
+    finally:
+        shutil.rmtree(snap.parent)
