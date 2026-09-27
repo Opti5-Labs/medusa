@@ -1,4 +1,4 @@
-import type { ScanResult } from "./api";
+import { getScansStatus, type ScanResult } from "./api";
 
 export interface RecentScan {
   id: string;
@@ -33,6 +33,50 @@ export function rememberScan(result: ScanResult, name: string) {
   try {
     sessionStorage.setItem(INDEX_KEY, JSON.stringify([entry, ...readRecentScans().filter((item) => item.id !== entry.id)].slice(0, 5)));
   } catch { /* The scan still works when the optional history cannot be stored. */ }
+}
+
+/** Why a remembered scan is gone from the server. */
+export type GoneReason = "restarted" | "expired";
+
+function readIndex(): RecentScan[] {
+  try {
+    const entries = JSON.parse(sessionStorage.getItem(INDEX_KEY) ?? "[]");
+    return Array.isArray(entries) ? entries : [];
+  } catch { return []; }
+}
+
+/** Forget one scan in this tab: its stored result, name and history entry. */
+export function forgetScan(id: string) {
+  try {
+    sessionStorage.removeItem(`scan:${id}`);
+    sessionStorage.removeItem(`scan:${id}:name`);
+    sessionStorage.setItem(INDEX_KEY, JSON.stringify(readIndex().filter((entry) => entry.id !== id)));
+  } catch { /* Nothing to forget when storage is unavailable. */ }
+}
+
+/**
+ * Ask the server which of these scans it still has and forget the rest here.
+ * Scans live only in the server's memory, so a restart loses them before
+ * their 30 minutes are up. Returns why each missing scan is gone. When the
+ * server can't be reached nothing is forgotten.
+ */
+export async function pruneScans(ids: string[]): Promise<Record<string, GoneReason>> {
+  if (ids.length === 0) return {};
+  let status;
+  try {
+    status = await getScansStatus(ids);
+  } catch {
+    return {};
+  }
+  const created = new Map(readIndex().map((entry) => [entry.id, entry.createdAt]));
+  const gone: Record<string, GoneReason> = {};
+  for (const id of ids) {
+    if (status.alive.includes(id)) continue;
+    const at = created.get(id);
+    gone[id] = at !== undefined && at < status.server_started_at * 1000 ? "restarted" : "expired";
+    forgetScan(id);
+  }
+  return gone;
 }
 
 /** When a scan's session ends (the backend deletes runs after 30 minutes). */

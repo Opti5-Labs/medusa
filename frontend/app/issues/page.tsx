@@ -9,6 +9,7 @@ import Badge, { type Tone } from "../components/Badge";
 import Icon from "../components/Icon";
 import MermaidView from "../components/MermaidView";
 import { ExpiredScan, LoadingState } from "../components/EmptyState";
+import { useScanGone } from "../../lib/useScanGone";
 import MoreText from "../components/MoreText";
 
 const PRIORITY_TONE: Record<string, Tone> = { High: "red", Medium: "amber", Low: "green" };
@@ -190,6 +191,7 @@ function IssuesContent() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [expired, setExpired] = useState(false);
   const [repoName, setRepoName] = useState<string | null>(null);
+  const gone = useScanGone(scanId);
 
   useEffect(() => {
     if (!scanId) {
@@ -211,9 +213,9 @@ function IssuesContent() {
     setRepoName(sessionStorage.getItem(`scan:${scanId}:name`));
   }, [scanId]);
 
-  if (expired) {
+  if (expired || gone) {
     return (
-      <ExpiredScan />
+      <ExpiredScan reason={gone ?? undefined} />
     );
   }
 

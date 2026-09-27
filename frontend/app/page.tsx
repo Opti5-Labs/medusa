@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import DemoButton from "./components/DemoButton";
 import Icon, { type IconName } from "./components/Icon";
-import { readRecentScans, type RecentScan } from "../lib/recentScans";
+import { pruneScans, readRecentScans, type RecentScan } from "../lib/recentScans";
 
 const SOURCE_TILE = {
   github: { icon: "github", tone: "" },
@@ -77,6 +77,8 @@ export default function Home() {
     const refresh = () => {
       setGreeting(greetingFor(new Date().getHours()));
       setRecent(readRecentScans());
+      // Drop scans the server lost (restart or expiry) so they aren't offered.
+      void pruneScans(readRecentScans().map((scan) => scan.id)).then(() => setRecent(readRecentScans()));
     };
     refresh();
     const timer = window.setInterval(() => setGreeting(greetingFor(new Date().getHours())), 60_000);

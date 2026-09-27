@@ -1,7 +1,7 @@
 "use client";
 
-import { memo } from "react";
-import type { FixAttempt, LogEvent, Mode } from "../../lib/api";
+import { memo, useState } from "react";
+import { downloadFile, type FixAttempt, type LogEvent, type Mode } from "../../lib/api";
 import AutoOpenDetails from "./AutoOpenDetails";
 import Badge, { type Tone } from "./Badge";
 import DiffView from "./DiffView";
@@ -42,6 +42,13 @@ interface Props {
  */
 // Memoized: while a run streams, only the panel whose log or result changed re-renders.
 export default memo(function CandidatePanel({ candidate: c, mode, log, recommended, finished, downloadUrl, patchUrl, canHide, onHide }: Props) {
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const download = (url: string, name: string) => {
+    setDownloadError(null);
+    downloadFile(url, name).catch((err: unknown) =>
+      setDownloadError(err instanceof Error ? `Download failed: ${err.message}` : "Download failed."),
+    );
+  };
   const r = c.test_results;
   const s = c.patch_stats;
   const running = c.sandbox_status === "running";
@@ -131,22 +138,32 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
       {finished && (downloadUrl || patchUrl) && (
         <div className="actions candidate-actions">
           {downloadUrl && (
-            <a href={downloadUrl} className={`btn btn-sm ${recommended ? "btn-primary" : "btn-secondary"}`}>
+            <button
+              type="button"
+              onClick={() => download(downloadUrl, `fix-${c.candidate_id}.zip`)}
+              className={`btn btn-sm ${recommended ? "btn-primary" : "btn-secondary"}`}
+            >
               <Icon name="upload" className="icon-download" aria-hidden="true" />
               Fixed code (.zip)
-            </a>
+            </button>
           )}
           {patchUrl && (
-            <a
-              href={patchUrl}
+            <button
+              type="button"
+              onClick={() => download(patchUrl, `medusa-${c.candidate_id}.patch`)}
               title="A unified diff you can apply from the repository root with git apply"
               className="btn btn-secondary btn-sm"
             >
               <Icon name="upload" className="icon-download" aria-hidden="true" />
               {mode === "sandboxed" ? ".patch" : ".patch (untested)"}
-            </a>
+            </button>
           )}
         </div>
+      )}
+      {downloadError && (
+        <p role="alert" className="alert">
+          {downloadError}
+        </p>
       )}
     </article>
   );
