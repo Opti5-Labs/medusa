@@ -348,3 +348,12 @@ class ArchitectureReport(BaseModel):
     curated_version: str | None = None  # curated only, e.g. "optilearn@1.1.0"
     log: list[LogEvent] = []  # snapshotted on completion, like ReproAttempt.log
     generated_at: float
+
+
+class ScanStatus(BaseModel):
+    """GET /api/scans/status: which of the browser's remembered scans the server still has."""
+
+    alive: list[str]  # the requested scan ids that still exist
+    server_started_at: (
+        float  # epoch seconds; scans made before this were lost in a restart
+    )

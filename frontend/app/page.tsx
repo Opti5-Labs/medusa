@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import DemoButton from "./components/DemoButton";
 import Icon, { type IconName } from "./components/Icon";
-import { readRecentScans, type RecentScan } from "../lib/recentScans";
+import { pruneScans, readRecentScans, type RecentScan } from "../lib/recentScans";
 
 const SOURCE_TILE = {
   github: { icon: "github", tone: "" },
@@ -77,6 +77,8 @@ export default function Home() {
     const refresh = () => {
       setGreeting(greetingFor(new Date().getHours()));
       setRecent(readRecentScans());
+      // Drop scans the server lost (restart or expiry) so they aren't offered.
+      void pruneScans(readRecentScans().map((scan) => scan.id)).then(() => setRecent(readRecentScans()));
     };
     refresh();
     const timer = window.setInterval(() => setGreeting(greetingFor(new Date().getHours())), 60_000);
@@ -125,7 +127,7 @@ export default function Home() {
               <input id="dashboard-repository" value={repository} onChange={(event) => setRepository(event.target.value)} ref={input} placeholder={STATIC_PLACEHOLDER} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} autoComplete="off" spellCheck={false} />
               <button className="launcher-submit" type="submit" aria-label="Scan this repository" disabled={!repository.trim()}><Icon name="arrow" /></button>
             </form>
-            <p className="launcher-caption"><Icon name="shield" /><span className="copy-long">Public repositories only. Code is read as text and never run.</span><span className="copy-short">Public repos only. Read as text, never run.</span></p>
+            <p className="launcher-caption"><Icon name="shield" /><span className="copy-long">Public repositories only. Python projects with tests are run in an isolated sandbox; everything else is read as text.</span><span className="copy-short">Public repos only. Tests run in a sandbox.</span></p>
           </div>
           <DemoButton />
         </section>

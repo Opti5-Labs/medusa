@@ -14,6 +14,7 @@ Error handling:
 import asyncio
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -30,7 +31,7 @@ from app.errors import MedusaError
 from app.github.issues import fetch_github_issues
 from app.ingest.github import ingest_github, parse_github_location
 from app.ingest.zip_upload import ingest_zip
-from app.models.contracts import ScanResult
+from app.models.contracts import ScanResult, ScanStatus
 from app.pipelines.scan import scan_repo
 from app.ratelimit import RateLimiter
 from app.store import RunStore, StoreFullError
@@ -38,6 +39,9 @@ from app.store import RunStore, StoreFullError
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+# Run state lives in memory, so a restart loses every scan made before this.
+SERVER_STARTED_AT = time.time()
+_MAX_STATUS_IDS = 10
 
 # Shared rate limiter — uses public defaults from config
 _scan_limiter = RateLimiter(
@@ -213,3 +217,12 @@ async def scan_upload(file: UploadFile, request: Request) -> ScanResult:
     finally:
         if tmp_dir is not None:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.get("/api/scans/status", response_model=ScanStatus)
+async def scans_status(ids: str = "") -> ScanStatus:
+    """Which of these scan ids (comma-separated, at most 10) the server still has."""
+    wanted = [i for i in ids.split(",") if i][:_MAX_STATUS_IDS]
+    store = _get_store()
+    alive = [i for i in wanted if await store.get(i) is not None]
+    return ScanStatus(alive=alive, server_started_at=SERVER_STARTED_AT)

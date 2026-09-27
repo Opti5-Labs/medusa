@@ -59,6 +59,7 @@ app.add_middleware(
     allow_credentials=False,  # no cookies used
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Accept"],
+    expose_headers=["Content-Disposition"],  # download file names
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────

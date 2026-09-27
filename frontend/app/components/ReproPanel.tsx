@@ -12,7 +12,7 @@ const STATUS: Record<ReproAttempt["status"], { label: string; tone: Tone }> = {
   running: { label: "Running…", tone: "blue" },
   reproduced: { label: "Reproduced", tone: "red" },
   not_reproducible: { label: "Not reproducible", tone: "green" },
-  plausible: { label: "Plausible (not executed)", tone: "amber" },
+  plausible: { label: "Plausible (not confirmed by a test)", tone: "amber" },
   error: { label: "Error", tone: "red" },
 };
 
@@ -106,7 +106,7 @@ export default memo(function ReproPanel({ mode, attempt, log, error }: Props) {
   const finished = attempt && attempt.status !== "running";
   const elapsed = finished ? elapsedSeconds(log) : null;
   const meta = [
-    mode === "sandboxed" ? "Isolated sandbox" : "Analysis only, not executed",
+    mode === "sandboxed" ? "Isolated sandbox" : "Analysis, not confirmed by a test",
     attempt?.investigator_source ? INVESTIGATORS[attempt.investigator_source] : null,
     elapsed !== null ? `${elapsed}s` : null,
   ].filter(Boolean);

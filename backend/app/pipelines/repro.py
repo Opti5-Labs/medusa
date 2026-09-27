@@ -194,7 +194,7 @@ async def _run_reasoning(run: ReproRun, record: ScanRecord, issue: Issue) -> Non
     await ch.emit(
         "medusa",
         "info",
-        "Analysis only: this repository's code is read as text and never executed.",
+        "Analysing this repository's code as text first.",
     )
     files = select_files_for(
         record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)

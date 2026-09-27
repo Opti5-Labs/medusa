@@ -27,6 +27,7 @@ import CandidatePanel from "../../components/CandidatePanel";
 import LogView from "../../components/LogView";
 import ReproPanel from "../../components/ReproPanel";
 import { ExpiredScan, LoadingState } from "../../components/EmptyState";
+import { useScanGone } from "../../../lib/useScanGone";
 import MoreText from "../../components/MoreText";
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -185,6 +186,7 @@ function Investigate() {
   const hide = useCallback((candidateId: string) => dispatch({ type: "hide", candidateId }), []);
 
   useEffect(() => setScan(loadScan(scanId)), [scanId]);
+  const gone = useScanGone(scanId);
 
   const issue: Issue | undefined = scan?.issues.find((i) => i.id === issueId);
   // Per-issue, not per-scan: the demo mixes one sandboxed issue with several
@@ -275,9 +277,9 @@ function Investigate() {
   if (scan === undefined) {
     return <LoadingState />;
   }
-  if (!scan || !issue) {
+  if (!scan || !issue || gone) {
     return (
-      <ExpiredScan what="issue" />
+      <ExpiredScan what="issue" reason={gone ?? undefined} />
     );
   }
 
@@ -355,7 +357,7 @@ function Investigate() {
             <p>
               {mode === "sandboxed"
                 ? "Reproduce the bug in a sandbox, then race candidate fixes through the tests."
-                : "Diagnose the bug from the code as text, then propose candidate patches. Nothing is executed."}
+                : "Diagnose the bug from the code. Python projects with tests are also run in an isolated sandbox: a failing test confirms the bug, and patches are verified against it."}
             </p>
           </div>
           <RunSteps steps={steps} />

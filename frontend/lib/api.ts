@@ -24,20 +24,41 @@ async function request<T>(
     ...init,
     headers,
   });
-  if (!res.ok) {
-    // Read the body once; it may be JSON ({"detail": ...}) or plain text.
-    const text = await res.text().catch(() => "");
-    let detail = text || res.statusText;
-    try {
-      const json = JSON.parse(text);
-      if (typeof json?.detail === "string") detail = json.detail;
-      else if (Array.isArray(json?.detail)) detail = json.detail.map((d: { msg?: string }) => d.msg).join("; ");
-    } catch {
-      // not JSON: keep the text
-    }
-    throw new Error(detail || `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw new Error(await errorDetail(res));
   return res.json() as Promise<T>;
+}
+
+/** The server's message for a failed response ({"detail": ...} or plain text). */
+async function errorDetail(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  let detail = text || res.statusText;
+  try {
+    const json = JSON.parse(text);
+    if (typeof json?.detail === "string") detail = json.detail;
+    else if (Array.isArray(json?.detail)) detail = json.detail.map((d: { msg?: string }) => d.msg).join("; ");
+  } catch {
+    // not JSON: keep the text
+  }
+  return detail || `HTTP ${res.status}`;
+}
+
+/**
+ * Download a file from the API without leaving the page, so a failure shows as
+ * a message instead of a raw JSON error page. Throws Error(detail) on failure.
+ */
+export async function downloadFile(url: string, fallbackName: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await errorDetail(res));
+  const blob = await res.blob();
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? fallbackName;
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(href), 1000);
 }
 
 // ── Types (mirror of backend/app/models/contracts.py) ────────────────────────
@@ -258,6 +279,15 @@ export const postAsk = (scanId: string, body: { question: string; issue_id?: str
  */
 export const openAskStream = (askId: string): EventSource =>
   new EventSource(`${BASE}/api/ask/${encodeURIComponent(askId)}/events`);
+
+/** GET /api/scans/status: which remembered scans the server still has. */
+export interface ScanStatus {
+  alive: string[];
+  server_started_at: number; // epoch seconds; earlier scans were lost in a restart
+}
+
+export const getScansStatus = (ids: string[]): Promise<ScanStatus> =>
+  request<ScanStatus>(`/api/scans/status?ids=${ids.map(encodeURIComponent).join(",")}`);
 
 /** GET /api/debug/{session_id}/download?candidate_id= */
 export const getDebugDownloadUrl = (

@@ -15,7 +15,8 @@ Deterministic Python     → prove whether a patch works: run, verify, rank
 ```
 
 A patch is never "working" because a model says so. On the OptiLearn path, the sandbox decides.
-On general repos nothing is executed, so nothing is ever labelled reproduced or tested.
+On general repos, only a Python project with tests is run (gVisor, `ARBITRARY_EXECUTION`); a
+result is labelled reproduced or tested only when a real test run in that sandbox says so.
 
 ## System overview
 
@@ -43,14 +44,14 @@ the backend pipelines, never directly by the browser.
 
 ## Two paths
 
-| | OptiLearn demo (verified) | General repos (analysis only) |
+| | OptiLearn demo (verified) | General repos |
 |---|---|---|
 | Input | Built-in demo repo with a known, real bug | Public GitHub URL or zip |
-| Executes code? | Yes, only inside the sandbox | **Never** |
+| Executes code? | Yes, only inside the sandbox | Python projects with tests, in a gVisor sandbox (`ARBITRARY_EXECUTION`); otherwise never |
 | Investigation | IBM Bob (live) and Granite, independently; a recorded Bob session replaces live Bob only with `BOB_MODE=replay` | IBM Bob (live) and Granite, independently |
-| Reproduce result | `reproduced` / `not_reproducible` | `plausible` + `confidence` |
-| Fix result | `passed` / `failed` per candidate | `not_applicable` |
-| UI label | Which investigator said what; "Recorded Bob session" only for a real replay; sandbox results are live | "Analysis only. Code was not executed. Patches are not verified." |
+| Reproduce result | `reproduced` / `not_reproducible` | `reproduced` when a model-written test fails in the sandbox, else `plausible` + `confidence` |
+| Fix result | `passed` / `failed` per candidate | `passed` / `failed` after a reproduction, else `not_applicable` |
+| UI label | Which investigator said what; "Recorded Bob session" only for a real replay; sandbox results are live | "Sandboxed" once a test really ran; otherwise "Analysis only", patches not verified |
 
 ## Pipeline (OptiLearn path)
 

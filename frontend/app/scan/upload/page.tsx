@@ -105,8 +105,9 @@ export default function ScanUploadPage() {
         <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
         <h2 className="title-1">Upload a zip</h2>
         <p className="page-lede">
-          Up to {MAX_ZIP_MB} MB and 2,000 files. Code is read as text, never run, so results are analysis,
-          not test runs.
+          Up to {MAX_ZIP_MB} MB and 2,000 files. Scanning reads the code as text. When you
+          reproduce an issue in a Python project with tests, its tests run in an isolated sandbox; otherwise
+          results are analysis, not test runs.
         </p>
       </header>
 
@@ -163,7 +164,7 @@ export default function ScanUploadPage() {
           <AssessingStatus
             steps={SCAN_STEPS}
             stepMs={2200}
-            note="Code is read as text and never executed. This can take up to 90 seconds."
+            note="Scanning reads the code as text. This can take up to 90 seconds."
           />
         )}
 
