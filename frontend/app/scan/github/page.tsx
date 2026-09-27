@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
-import { postScan, ScanResult } from "../../../lib/api";
+import { postScan } from "../../../lib/api";
 import AssessingStatus from "../../components/AssessingStatus";
 import Icon from "../../components/Icon";
 import { rememberScan } from "../../../lib/recentScans";
@@ -25,6 +25,7 @@ const SCAN_STEPS = [
   "Reviewing the code for issues",
   "Fetching the repository's open GitHub Issues",
 ];
+const STEP_MS = 2200;
 
 type Stage = "idle" | "scanning" | "done";
 
@@ -62,10 +63,16 @@ export default function ScanGitHubPage() {
     abortRef.current = new AbortController();
 
     try {
-      const result: ScanResult = await postScan(
-        { source: "github", repo_url: normalizeGithubUrl(url) },
-        abortRef.current.signal
-      );
+      // A matching request can answer almost instantly (e.g. the OptiLearn demo
+      // shortcut), so hold the steps on screen long enough to follow them
+      // instead of jumping straight to the results — same as the demo button.
+      const [result] = await Promise.all([
+        postScan(
+          { source: "github", repo_url: normalizeGithubUrl(url) },
+          abortRef.current.signal
+        ),
+        new Promise((resolve) => setTimeout(resolve, SCAN_STEPS.length * STEP_MS)),
+      ]);
       // "owner/repo" for display, derived from what was typed.
       const displayName = normalizeGithubUrl(url)
         .replace(/^https?:\/\//i, "")

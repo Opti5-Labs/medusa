@@ -53,6 +53,14 @@ _scan_limiter = RateLimiter(
 # Seconds kept back from the scan budget for storing and returning the result.
 _RESPONSE_MARGIN_S = 5
 
+# GitHub mirrors of the OptiLearn demo repo. Scanning either one runs the
+# canned demo instead of a real ingest, so the bundled Whisper sandbox
+# scenario and reasoning-mode issues stay available exactly as in source="demo".
+_OPTILEARN_DEMO_REPOS = {
+    ("ilakiancs", "optilearn"),
+    ("chanithaabey", "optilearn-test"),
+}
+
 
 # ── Request model ─────────────────────────────────────────────────────────────
 
@@ -98,7 +106,9 @@ async def scan(body: ScanRequest, request: Request) -> ScanResult:
     POST /api/scan
 
     source="demo"  -> pre-baked OptiLearn result, exempt from rate limit.
-    source="github" -> download public repo, scan, return ScanResult.
+    source="github" -> download public repo, scan, return ScanResult, unless
+        the URL is a known OptiLearn mirror, in which case it runs the same
+        pre-baked demo as source="demo".
     """
     if body.source == "demo":
         result, scenarios = load_demo()
@@ -110,6 +120,15 @@ async def scan(body: ScanRequest, request: Request) -> ScanResult:
     # Validate before spending a rate-limit slot on a malformed URL
     repo_url = body.repo_url or ""
     owner, repo, ref, subdir = parse_github_location(repo_url)
+
+    if (owner.lower(), repo.lower()) in _OPTILEARN_DEMO_REPOS:
+        result, scenarios = load_demo()
+        await _get_store().create(result.scan_id, None, result, scenarios=scenarios)
+        log.info(
+            "scan: optilearn demo repo url=%s scan_id=%s", repo_url, result.scan_id
+        )
+        return result
+
     _scan_limiter.check(request)
 
     tmp_dir: Path | None = None

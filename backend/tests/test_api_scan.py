@@ -67,6 +67,24 @@ async def test_demo_unique_ids_each_call(client):
     assert ids1.isdisjoint(ids2), "Issue IDs must be unique across scans"
 
 
+@pytest.mark.parametrize(
+    "repo_url",
+    [
+        "https://github.com/Ilakiancs/OptiLearn",
+        "https://github.com/ChanithaAbey/OptiLearn-Test",
+        "https://github.com/ilakiancs/optilearn/",  # case/trailing-slash insensitive
+    ],
+)
+async def test_github_optilearn_mirror_runs_demo(client, repo_url):
+    resp = await client.post(
+        "/api/scan", json={"source": "github", "repo_url": repo_url}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["repo_source"] == "demo"
+    assert isinstance(data["issues"], list)
+
+
 # ── Request validation ────────────────────────────────────────────────────────
 
 

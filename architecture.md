@@ -4,8 +4,8 @@
 > angles, reproduces the failure, tests competing patches in isolated sandboxes, and recommends a fix
 > based on execution evidence rather than model confidence.
 
-This document describes the target design. Hard rules, limits and contracts live in `CLAUDE.md`;
-the plan and team split live in `PROJECT.md`. If they disagree, `CLAUDE.md` wins.
+This document describes the target design. Hard rules, limits and contracts live in `CLAUDE.md`.
+If they disagree, `CLAUDE.md` wins.
 
 ## Core principle
 

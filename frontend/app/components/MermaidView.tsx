@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Icon from "./Icon";
 
 interface Props {
   /** Server-generated, validated Mermaid source (see backend/app/architecture/mermaid.py). */
@@ -11,6 +12,18 @@ interface Props {
   /** Shown instead of the diagram if rendering fails (e.g. an unsupported browser). */
   fallback?: React.ReactNode;
 }
+
+// Scale is relative to the diagram's true native pixel size (see the
+// setAttribute fix below), so 1 means "actual size" the way Mermaid drew it.
+// The diagram is plain vector SVG rendered with a CSS transform (no
+// rasterized layer — see the .diagram-stage comment), so it stays crisp at
+// any scale: MAX_SCALE just needs to comfortably exceed native size for a
+// Miro-style "zoom in as far as you want" feel, and MIN_SCALE just needs to
+// stay below the smallest realistic fit-to-width ratio for a huge diagram.
+const MIN_SCALE = 0.02;
+const MAX_SCALE = 16;
+const ZOOM_STEP = 1.35;
+const PAN_STEP = 90;
 
 /**
  * Renders Mermaid source to an inline SVG, client-side only.
@@ -29,6 +42,61 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   const [ready, setReady] = useState(false);
   const mounted = useRef(false);
   const host = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const view = useRef({ scale: 1, x: 0, y: 0 });
+  const drag = useRef<{ pointerX: number; pointerY: number; startX: number; startY: number } | null>(null);
+
+  const applyTransform = useCallback(() => {
+    const el = stage.current;
+    if (!el) return;
+    const { scale, x, y } = view.current;
+    el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }, []);
+
+  const zoomAtCenter = useCallback(
+    (factor: number) => {
+      const vp = viewport.current;
+      if (!vp) return;
+      const cx = vp.clientWidth / 2;
+      const cy = vp.clientHeight / 2;
+      const { scale, x, y } = view.current;
+      const nextScale = Math.min(Math.max(scale * factor, MIN_SCALE), MAX_SCALE);
+      const ratio = nextScale / scale;
+      view.current = {
+        scale: nextScale,
+        x: cx - (cx - x) * ratio,
+        y: cy - (cy - y) * ratio,
+      };
+      applyTransform();
+    },
+    [applyTransform]
+  );
+
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      view.current = { ...view.current, x: view.current.x + dx, y: view.current.y + dy };
+      applyTransform();
+    },
+    [applyTransform]
+  );
+
+  // Fits the diagram to the viewport's width (its full height pans into view
+  // with the directional pad or a drag), the same layout GitHub's own
+  // Mermaid viewer uses instead of shrinking everything to fit one box.
+  const fitToView = useCallback(() => {
+    const vp = viewport.current;
+    const st = stage.current;
+    const svgEl = st?.querySelector("svg");
+    if (!vp || !st || !svgEl) return;
+    st.style.transform = "translate(0px, 0px) scale(1)";
+    const svgRect = svgEl.getBoundingClientRect();
+    const vw = vp.clientWidth;
+    if (svgRect.width === 0 || vw === 0) return;
+    const scale = Math.min(Math.max(vw / svgRect.width, MIN_SCALE), MAX_SCALE);
+    view.current = { scale, x: (vw - svgRect.width * scale) / 2, y: 12 };
+    applyTransform();
+  }, [applyTransform]);
 
   // Follow the selected app theme, including changes from another browser tab.
   useEffect(() => {
@@ -113,6 +181,53 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- themeTick intentionally forces a re-render
   }, [source, id, themeTick, ready]);
 
+  // Reset pan/zoom and fit the freshly rendered SVG into the viewport.
+  useEffect(() => {
+    if (!svg) return;
+    // Mermaid renders with width="100%" (for useMaxWidth). With no ancestor
+    // giving .diagram-stage a real width, that percentage can't resolve, and
+    // the browser falls back to the ~300x150 default intrinsic size for a
+    // replaced element with no other sizing info — every zoom level was then
+    // just magnifying that already-tiny render, not the diagram itself,
+    // which is why it stayed blurry however far in you zoomed. Overwrite
+    // width/height with real pixel values from the SVG's own viewBox so it
+    // lays out — and then scales — at its true native size.
+    const svgEl = stage.current?.querySelector("svg");
+    const box = svgEl?.viewBox.baseVal;
+    if (svgEl && box && box.width && box.height) {
+      svgEl.setAttribute("width", String(box.width));
+      svgEl.setAttribute("height", String(box.height));
+    }
+    view.current = { scale: 1, x: 0, y: 0 };
+    const raf = requestAnimationFrame(fitToView);
+    return () => cancelAnimationFrame(raf);
+  }, [svg, fitToView]);
+
+  // Dragging is the only way to pan besides the directional pad — there is no
+  // scroll-wheel zoom, so hovering the diagram scrolls the page normally.
+  function onPointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    drag.current = {
+      pointerX: e.clientX,
+      pointerY: e.clientY,
+      startX: view.current.x,
+      startY: view.current.y,
+    };
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!drag.current) return;
+    view.current.x = drag.current.startX + (e.clientX - drag.current.pointerX);
+    view.current.y = drag.current.startY + (e.clientY - drag.current.pointerY);
+    applyTransform();
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    drag.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  }
+
   if (!source) return null;
 
   if (failed) {
@@ -135,11 +250,49 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   }
 
   return (
-    <div
-      ref={host}
-      className={`mermaid-view ${className ?? ""}`}
-      // eslint-disable-next-line @typescript-eslint/naming-convention -- React API
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div ref={host} className={`mermaid-view ${className ?? ""}`}>
+      <div
+        ref={viewport}
+        className="diagram-viewport"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <div
+          ref={stage}
+          className="diagram-stage"
+          // eslint-disable-next-line @typescript-eslint/naming-convention -- React API
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      </div>
+      <div className="diagram-controls">
+        <div className="diagram-pad-panel">
+          <button type="button" className="pad-btn pad-up" onClick={() => panBy(0, PAN_STEP)} aria-label="Pan up">
+            <Icon name="chevron" style={{ transform: "rotate(-90deg)" }} />
+          </button>
+          <button type="button" className="pad-btn pad-left" onClick={() => panBy(PAN_STEP, 0)} aria-label="Pan left">
+            <Icon name="chevron" style={{ transform: "rotate(180deg)" }} />
+          </button>
+          <button type="button" className="pad-btn pad-center" onClick={fitToView} aria-label="Recenter diagram">
+            <Icon name="frame" />
+          </button>
+          <button type="button" className="pad-btn pad-right" onClick={() => panBy(-PAN_STEP, 0)} aria-label="Pan right">
+            <Icon name="chevron" />
+          </button>
+          <button type="button" className="pad-btn pad-down" onClick={() => panBy(0, -PAN_STEP)} aria-label="Pan down">
+            <Icon name="chevron" style={{ transform: "rotate(90deg)" }} />
+          </button>
+        </div>
+        <div className="diagram-zoom-panel">
+          <button type="button" className="pad-btn" onClick={() => zoomAtCenter(ZOOM_STEP)} aria-label="Zoom in">
+            <Icon name="zoomIn" />
+          </button>
+          <button type="button" className="pad-btn" onClick={() => zoomAtCenter(1 / ZOOM_STEP)} aria-label="Zoom out">
+            <Icon name="zoomOut" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
