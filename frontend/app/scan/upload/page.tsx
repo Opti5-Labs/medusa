@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useRef, useCallback } from "react";
-import { postScanUpload, ScanResult } from "../../../lib/api";
+import { postScanUpload } from "../../../lib/api";
 import AssessingStatus from "../../components/AssessingStatus";
 import Icon from "../../components/Icon";
 import { rememberScan } from "../../../lib/recentScans";
@@ -14,6 +14,7 @@ const SCAN_STEPS = [
   "Selecting the source files to analyse",
   "Reviewing the code for issues",
 ];
+const STEP_MS = 2200;
 
 // NEXT_PUBLIC_MAX_ZIP_MB lets local devs raise the client-side check to match
 // a raised server limit (set in backend/.env). Defaults to 20 to match the
@@ -76,7 +77,13 @@ export default function ScanUploadPage() {
     abortRef.current = new AbortController();
 
     try {
-      const result: ScanResult = await postScanUpload(file, abortRef.current.signal);
+      // Small archives can upload and scan almost instantly, so hold the steps
+      // on screen long enough to follow them instead of jumping straight to
+      // the results — same as the demo button.
+      const [result] = await Promise.all([
+        postScanUpload(file, abortRef.current.signal),
+        new Promise((resolve) => setTimeout(resolve, SCAN_STEPS.length * STEP_MS)),
+      ]);
       rememberScan(result, file.name.replace(/\.zip$/i, ""));
       router.push(`/issues?scan=${result.scan_id}`);
     } catch (err: unknown) {
