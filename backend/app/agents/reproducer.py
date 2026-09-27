@@ -35,10 +35,14 @@ class Draft:
 
 
 _SYSTEM = (
-    "You write a single pytest test file that reproduces a reported bug in the "
-    "repository shown. Rules: the test must FAIL on the current code because of the "
-    "bug (an assertion failure, not an import or syntax error) and must PASS once the "
-    "bug is fixed. Import the project's modules the way its own tests do. Use only "
+    "You write a single pytest test file that checks a reported bug in the "
+    "repository shown. Assert the CORRECT behaviour the report describes, taken "
+    "from the documentation, docstrings or the report itself: if the bug is real the "
+    "test fails on the current code with an assertion failure (not an import or "
+    "syntax error), and it passes once the bug is fixed. If the code is actually "
+    "correct the test passes, which is a valid result; never weaken, invert or "
+    "invent an expectation to make it fail. Import the project's modules the way "
+    "its own tests do. Use only "
     "pytest and the standard library plus the project's own dependencies; no "
     "network, no files outside a tmp_path fixture, no sleeps. Keep it short: one or "
     "two test functions named test_*. Everything you need is in this message: "
