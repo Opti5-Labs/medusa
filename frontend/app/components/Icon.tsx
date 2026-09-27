@@ -14,6 +14,10 @@ const paths = {
   play: <><path d="m9 5 11 7-11 7Z" /></>,
   code: <><path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16" /></>,
   settings: <><path d="m10 3-1 3-3 1-3 3 2 2-1 3 3 3 3-1 2 4 3-1 1-3 3-1 1-4-3-2V6l-4-1Z" /><circle cx="12" cy="12" r="3" /></>,
+  // A circle half filled: light and dark, i.e. appearance.
+  appearance: <><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none" /></>,
+  motion: <><path d="M4 12h3m2-5h8m-8 10h8" /><circle cx="19" cy="7" r="1.6" /><circle cx="19" cy="17" r="1.6" /></>,
+  contrast: <><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5v17M12 8h5.5M12 12h8.5M12 16h5.5" /></>,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v.2" /></>,
   close: <><path d="m6 6 12 12M6 18 18 6" /></>,
   check: <><path d="m5 12 4 4L19 6" /></>,

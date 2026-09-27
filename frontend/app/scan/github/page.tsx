@@ -101,8 +101,8 @@ export default function ScanGitHubPage() {
         <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
         <h2 className="title-1">Link a GitHub repository</h2>
         <p className="page-lede">
-          Medusa reviews a public repository&apos;s code and its open GitHub Issues. The code is read
-          as text and never executed, so results are analysis, not test runs.
+          Medusa reviews a public repository&apos;s code and open GitHub Issues. Code is read as text,
+          never run, so results are analysis, not test runs.
         </p>
       </header>
 
@@ -133,7 +133,7 @@ export default function ScanGitHubPage() {
             </p>
           )}
           <p id="repo-hint" className="field-hint">
-            To scan part of a large repository, link a folder such as /tree/main/src.
+            Large repository? Link a folder, such as /tree/main/src.
           </p>
         </div>
 

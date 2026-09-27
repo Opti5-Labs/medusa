@@ -26,7 +26,9 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   const [svg, setSvg] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [themeTick, setThemeTick] = useState(0);
+  const [ready, setReady] = useState(false);
   const mounted = useRef(false);
+  const host = useRef<HTMLDivElement>(null);
 
   // Re-render if the OS colour scheme changes while this diagram is on screen.
   useEffect(() => {
@@ -44,12 +46,39 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     };
   }, []);
 
+  // Layout (Mermaid + ELK) blocks the main thread for up to a second, and the
+  // smooth scroller runs on the main thread, so rendering mid-scroll stutters.
+  // Wait until the diagram is near the viewport (never, while inside a closed
+  // <details>, which has no box) and scrolling has paused.
+  useEffect(() => {
+    const el = host.current;
+    if (!el || ready) return;
+    let near = false;
+    let quietTimer = 0;
+    const tryStart = () => {
+      window.clearTimeout(quietTimer);
+      quietTimer = window.setTimeout(() => { if (near) setReady(true); }, 400);
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      near = entry.isIntersecting;
+      if (near) tryStart();
+    }, { rootMargin: "50% 0px" });
+    observer.observe(el);
+    document.addEventListener("scroll", tryStart, { capture: true, passive: true });
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("scroll", tryStart, { capture: true });
+      window.clearTimeout(quietTimer);
+    };
+  }, [ready]);
+
   useEffect(() => {
     if (!source) {
       setSvg(null);
       setFailed(false);
       return;
     }
+    if (!ready) return;
     let cancelled = false;
     setFailed(false);
 
@@ -79,13 +108,13 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- themeTick intentionally forces a re-render
-  }, [source, id, themeTick]);
+  }, [source, id, themeTick, ready]);
 
   if (!source) return null;
 
   if (failed) {
     return (
-      <div className={className}>
+      <div ref={host} className={className}>
         <p role="alert" className="field-error">
           The diagram could not be rendered. The information below is the same.
         </p>
@@ -96,15 +125,16 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
 
   if (!svg) {
     return (
-      <div className={className}>
-        <p className="field-hint">Rendering diagram…</p>
+      <div ref={host} className={className}>
+        <p className="field-hint">{ready ? "Rendering diagram…" : "Diagram loads when you reach it."}</p>
       </div>
     );
   }
 
   return (
     <div
-      className={className}
+      ref={host}
+      className={`mermaid-view ${className ?? ""}`}
       // eslint-disable-next-line @typescript-eslint/naming-convention -- React API
       dangerouslySetInnerHTML={{ __html: svg }}
     />

@@ -32,7 +32,8 @@ function inline(text: string): ReactNode[] {
     if (code) {
       out.push(
         <code key={key++} className="answer-code">
-          {token.slice(1, -1)}
+          {/* Break opportunities after "/" so a long path wraps between folders, not mid-name. */}
+          {token.slice(1, -1).replace(/\//g, "/\u200b")}
         </code>
       );
     } else if (bold) {

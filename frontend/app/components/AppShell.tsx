@@ -1,13 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { Outfit } from "next/font/google";
 import { usePathname } from "next/navigation";
 import Lenis from "lenis";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { flushSync } from "react-dom";
+import { useSheet } from "../../lib/useSheet";
 import AskBar from "./AskBar";
 import Icon, { type IconName } from "./Icon";
+import RetentionTimer from "./RetentionTimer";
+import ThinkingOrb from "./ThinkingOrb";
 
-const navigation: { href: string; label: string; icon: IconName }[] = [
+// Geometric display face for the footer's oversized wordmark only; self-hosted by next/font.
+const display = Outfit({ subsets: ["latin"], weight: "600", display: "swap" });
+
+const navigation:{ href: string; label: string; icon: IconName }[] = [
   { href: "/", label: "Overview", icon: "home" },
   { href: "/scan/github", label: "GitHub repo", icon: "github" },
   { href: "/scan/upload", label: "Upload zip", icon: "upload" },
@@ -21,7 +29,8 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith("/investigate")) return "Investigation";
   if (pathname.startsWith("/recent")) return "Recent scans";
   if (pathname.startsWith("/architecture")) return "Architecture";
-  return "Scan results";
+  if (pathname.startsWith("/issues")) return "Scan results";
+  return "Not found";
 }
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -29,8 +38,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [solid, setSolid] = useState(false);
   const [dialogContent, setDialogContent] = useState<"guide" | "appearance">("guide");
   const dialog = useRef<HTMLDialogElement>(null);
+  const sheet = useSheet(dialog);
   const scroller = useRef<HTMLDivElement>(null);
   const smooth = useRef<Lenis | null>(null);
+  const scrollTrack = useRef<HTMLDivElement>(null);
+  const giant = useRef<HTMLDivElement>(null);
   const home = pathname === "/";
 
   useEffect(() => {
@@ -47,7 +59,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       smooth.current?.destroy();
       const el = scroller.current;
       const inFrame = framed.matches && el?.firstElementChild ? { wrapper: el, content: el.firstElementChild, eventsTarget: el } : {};
-      smooth.current = new Lenis({ ...inFrame, autoRaf: true, lerp: 0.07, wheelMultiplier: 0.9, anchors: true, allowNestedScroll: true, stopInertiaOnNavigate: true });
+      smooth.current = new Lenis({ ...inFrame, autoRaf: true, lerp: 0.13, wheelMultiplier: 1, anchors: true, allowNestedScroll: true, stopInertiaOnNavigate: true });
     };
     start();
     framed.addEventListener("change", start);
@@ -56,6 +68,21 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       smooth.current?.destroy();
       smooth.current = null;
     };
+  }, []);
+
+  // The footer emblem is hidden until the lockup scrolls into view, then its arms
+  // spiral in; scrolling away unwinds them again. The gap between the two
+  // thresholds keeps it from flickering at the boundary. The class is set directly,
+  // not through state, so revealing it mid-scroll doesn't re-render the whole shell.
+  useEffect(() => {
+    const el = giant.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.intersectionRatio >= 0.4) el.classList.add("is-in");
+      else if (entry.intersectionRatio < 0.1) el.classList.remove("is-in");
+    }, { threshold: [0, 0.1, 0.4] });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   // A new page starts at the top of the content column (anchor links excepted).
@@ -71,7 +98,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const onScroll = (event: Event) => {
       const el = event.target === document ? document.documentElement : event.target;
       if (!(el instanceof Element)) return;
-      el.classList.add("is-scrolling");
+      if (!timers.has(el)) el.classList.add("is-scrolling");
       window.clearTimeout(timers.get(el));
       timers.set(el, window.setTimeout(() => {
         el.classList.remove("is-scrolling");
@@ -82,6 +109,64 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       document.removeEventListener("scroll", onScroll, { capture: true });
       timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
+
+  // The content column's scrollbar floats over the content (Chrome's own always
+  // takes width, which left a strip by the window corner and made the page
+  // narrower whenever it scrolled). The thumb follows the scroll position and
+  // can be dragged; it fades like the other scrollbars.
+  useEffect(() => {
+    const el = scroller.current;
+    const track = scrollTrack.current;
+    const thumb = track?.firstElementChild as HTMLElement | null;
+    if (!el || !track || !thumb) return;
+    let frame = 0;
+    const layout = () => {
+      frame = 0;
+      const range = el.scrollHeight - el.clientHeight;
+      track.hidden = range <= 1;
+      if (range <= 1) return;
+      const trackHeight = track.clientHeight;
+      const size = Math.max(40, (el.clientHeight / el.scrollHeight) * trackHeight);
+      thumb.style.height = `${size}px`;
+      thumb.style.transform = `translateY(${(el.scrollTop / range) * (trackHeight - size)}px)`;
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(layout); };
+    const resize = new ResizeObserver(schedule);
+    resize.observe(el);
+    if (el.firstElementChild) resize.observe(el.firstElementChild);
+    el.addEventListener("scroll", schedule, { passive: true });
+
+    let drag: { y: number; top: number } | null = null;
+    const down = (event: PointerEvent) => {
+      drag = { y: event.clientY, top: el.scrollTop };
+      thumb.setPointerCapture(event.pointerId);
+      track.classList.add("is-dragging");
+      event.preventDefault();
+    };
+    const move = (event: PointerEvent) => {
+      if (!drag) return;
+      const range = el.scrollHeight - el.clientHeight;
+      const travel = track.clientHeight - thumb.offsetHeight;
+      const top = drag.top + ((event.clientY - drag.y) / Math.max(travel, 1)) * range;
+      if (smooth.current) smooth.current.scrollTo(top, { immediate: true });
+      else el.scrollTop = top;
+    };
+    const up = () => { drag = null; track.classList.remove("is-dragging"); };
+    thumb.addEventListener("pointerdown", down);
+    thumb.addEventListener("pointermove", move);
+    thumb.addEventListener("pointerup", up);
+    thumb.addEventListener("pointercancel", up);
+    layout();
+    return () => {
+      cancelAnimationFrame(frame);
+      resize.disconnect();
+      el.removeEventListener("scroll", schedule);
+      thumb.removeEventListener("pointerdown", down);
+      thumb.removeEventListener("pointermove", move);
+      thumb.removeEventListener("pointerup", up);
+      thumb.removeEventListener("pointercancel", up);
     };
   }, []);
 
@@ -128,9 +213,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  function openDialog(content: "guide" | "appearance") {
-    setDialogContent(content);
-    dialog.current?.showModal();
+  // The system accessibility settings, shown read-only in Appearance.
+  const [system, setSystem] = useState({ motion: false, transparency: false, contrast: false });
+  useEffect(() => {
+    const queries = {
+      motion: matchMedia("(prefers-reduced-motion: reduce)"),
+      transparency: matchMedia("(prefers-reduced-transparency: reduce)"),
+      contrast: matchMedia("(prefers-contrast: more)"),
+    };
+    const read = () => setSystem({ motion: queries.motion.matches, transparency: queries.transparency.matches, contrast: queries.contrast.matches });
+    read();
+    Object.values(queries).forEach((q) => q.addEventListener("change", read));
+    return () => Object.values(queries).forEach((q) => q.removeEventListener("change", read));
+  }, []);
+
+  function openDialog(content: "guide" | "appearance", event: MouseEvent<HTMLElement>) {
+    // Render the content first, so the sheet measures its real height before it moves.
+    flushSync(() => setDialogContent(content));
+    sheet.open(event.currentTarget);
   }
 
   function toggleSurface() {
@@ -151,7 +251,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <div className="sidebar-group">
           <div className="sidebar-section">Workspace</div>
-          <nav aria-label="Main navigation">
+          {/* --tab drives the phone tab bar's sliding selection pill (-1: no tab is current). */}
+          <nav aria-label="Main navigation" style={{ "--tab": navigation.findIndex((n) => n.href === pathname) } as CSSProperties}>
             {navigation.map(({ href, label, icon }) => (
               <Link key={label} href={href} title={label} className={`nav-link ${pathname === href ? "active" : ""}`} aria-current={pathname === href ? "page" : undefined}>
                 <Icon name={icon} /><span>{label}</span>
@@ -160,8 +261,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
         <div className="sidebar-bottom">
-          <div className="sidebar-note"><Icon name="shield" /><div><strong>Nothing is kept</strong><p>Scans are deleted after 30 minutes.</p></div></div>
-          <button className="nav-link" onClick={() => openDialog("appearance")} title="Appearance"><Icon name="settings" /><span>Appearance</span></button>
+          <RetentionTimer />
+          <button className="nav-link" onClick={(e) => openDialog("appearance", e)} title="Appearance"><Icon name="appearance" /><span>Appearance</span></button>
+          {/* Phones: the two global actions share one glass capsule in the top bar (iOS toolbar grouping). */}
+          <div className="bar-group">
+            <button type="button" aria-label="How Medusa works" onClick={(e) => openDialog("guide", e)}><Icon name="info" /></button>
+            <button type="button" aria-label="Appearance" onClick={(e) => openDialog("appearance", e)}><Icon name="appearance" /></button>
+          </div>
         </div>
       </aside>
 
@@ -170,49 +276,90 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="workspace-art" aria-hidden="true" />
           <header className="workspace-header">
             <div className="breadcrumb"><span>Workspace</span><Icon name="chevron" /><strong>{pageTitle(pathname)}</strong></div>
-            <button className="icon-button" title="How Medusa works" aria-label="How Medusa works" onClick={() => openDialog("guide")}><Icon name="info" /></button>
+            <button className="icon-button" title="How Medusa works" aria-label="How Medusa works" onClick={(e) => openDialog("guide", e)}><Icon name="info" /></button>
           </header>
           <div className="ask-container"><Suspense fallback={null}><AskBar /></Suspense></div>
           <main id="main-content" tabIndex={-1} className={home ? "dashboard-main" : "route-main"}>{children}</main>
           <footer className="workspace-footer">
-            <div className="footer-brand">
-              <img src="/images/medusa-mark.png" width="18" height="18" alt="" />
-              <span className="footer-wordmark">MEDUSA</span>
-              <span className="footer-divider" aria-hidden="true" />
-              <span>Built for the IBM Bob 2.0 Hackathon</span>
-            </div>
-            <div className="footer-links">
-              <button type="button" className="footer-link" onClick={() => openDialog("guide")}>How it works</button>
-              <span className="footer-divider" aria-hidden="true" />
-              <span>Powered by IBM Bob and Granite on watsonx.ai</span>
+            <div className="footer-inner">
+              <div className="footer-top">
+                <p>Built for the IBM Bob 2.0 Hackathon <span aria-hidden="true">·</span> lablab.ai, Sep 2026</p>
+                <p className="footer-credits">
+                  Powered by
+                  <span><Icon name="bob" />IBM Bob</span>
+                  <span aria-hidden="true">&amp;</span>
+                  <span><Icon name="granite" />Granite on watsonx.ai</span>
+                </p>
+              </div>
+              <div ref={giant} className={`footer-giant ${display.className}`} aria-hidden="true">
+                <ThinkingOrb />
+                <span className="footer-giant-text">medusa</span>
+              </div>
             </div>
           </footer>
         </div>
       </div>
+      <div ref={scrollTrack} className="scroll-track" aria-hidden="true" hidden><span className="scroll-thumb" /></div>
 
-      <dialog ref={dialog} className="workspace-dialog" onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }} aria-labelledby="dialog-title">
-        <div className="dialog-heading">
-          <span className={`tile ${dialogContent === "guide" ? "" : "gray"}`}><Icon name={dialogContent === "guide" ? "spark" : "settings"} /></span>
-          <button className="icon-button" aria-label="Close" onClick={() => dialog.current?.close()}><Icon name="close" /></button>
-        </div>
-        <h2 id="dialog-title">{dialogContent === "guide" ? "How Medusa works" : "Appearance"}</h2>
+      {/* Opening, closing, dragging and dismissing (Escape, outside click) live in useSheet. */}
+      <dialog ref={dialog} className="workspace-dialog" aria-labelledby="dialog-title">
         {dialogContent === "guide" ? (
           <>
-            <p>Link a public repository or upload a zip. Medusa reads the code, lists issues, and lets you investigate each one with IBM Bob and Granite.</p>
-            <ol className="guide-steps">
-              <li><div><strong>Scan</strong><p>Find issues and ask questions grounded in the code.</p></div></li>
-              <li><div><strong>Investigate</strong><p>Bob and Granite diagnose independently and each propose fixes.</p></div></li>
-              <li><div><strong>Verify</strong><p>On the OptiLearn demo, fixes race through tests in a sandbox. Other repositories are read as text, so their fixes are not tested.</p></div></li>
+            {/* A "What's New" style welcome sheet: title, three features with tinted symbols,
+                and one button. Like Apple's, it has no close button: Continue is the way out. */}
+            <div className="guide-hero" data-sheet-handle>
+              <h2 id="dialog-title">How Medusa works</h2>
+              <p>From a repository to a tested fix, in three steps.</p>
+            </div>
+            <ol className="guide-features">
+              <li style={{ "--i": 0 } as CSSProperties}>
+                <span className="guide-symbol is-cyan"><Icon name="search" /></span>
+                <div><strong>Scan</strong><p>Link a public repository or upload a zip. Medusa lists the issues; ask anything about the code.</p></div>
+              </li>
+              <li style={{ "--i": 1 } as CSSProperties}>
+                <span className="guide-symbol is-purple"><Icon name="spark" /></span>
+                <div><strong>Investigate</strong><p>IBM Bob and Granite each diagnose an issue independently and propose fixes.</p></div>
+              </li>
+              <li style={{ "--i": 2 } as CSSProperties}>
+                <span className="guide-symbol is-green"><Icon name="shield" /></span>
+                <div><strong>Verify</strong><p>On the OptiLearn demo, every fix runs the tests in a sandbox; the one that passes is recommended.</p></div>
+              </li>
             </ol>
+            <p className="guide-footnote">Other repositories are read as text, so their fixes are not tested.</p>
+            <button className="btn btn-primary btn-lg guide-done" onClick={sheet.close}>Continue</button>
           </>
         ) : (
           <>
-            <p>Medusa uses translucent surfaces over a dark workspace.</p>
-            <div className="appearance-row">
-              <div><strong>Reduce transparency</strong><p>Use solid surfaces for stronger contrast.</p></div>
-              <button role="switch" aria-checked={solid} aria-label="Reduce transparency" className={`toggle ${solid ? "on" : ""}`} onClick={toggleSurface}><span /></button>
+            {/* A settings sheet: grouped sections with a header and footer, dismissed from the toolbar. */}
+            <div className="sheet-bar" data-sheet-handle>
+              <button className="icon-button sheet-close" aria-label="Close" onClick={sheet.close}><Icon name="close" /></button>
+              <h2 id="dialog-title" className="sheet-title">Appearance</h2>
             </div>
-            <p className="dialog-footnote">Motion, transparency and contrast also follow your system settings.</p>
+            <div className="settings-group">
+              <div className="settings-row">
+                <span className="tile tile-sm"><Icon name="layers" /></span>
+                <div className="settings-row-text"><strong id="solid-label">Solid surfaces</strong></div>
+                {/* With the device's Reduce Transparency on, surfaces are already solid: the
+                    switch shows that and is locked, as iOS shows a setting managed elsewhere. */}
+                <button role="switch" aria-checked={solid || system.transparency} aria-labelledby="solid-label" aria-describedby="solid-note" disabled={system.transparency} className={`toggle ${solid || system.transparency ? "on" : ""}`} onClick={toggleSurface}><span /></button>
+              </div>
+            </div>
+            <p id="solid-note" className="settings-footer">{system.transparency ? "On while Reduce Transparency is on in your device settings." : "Opaque surfaces instead of glass, for stronger contrast."}</p>
+            <p className="settings-caption">Follows your system</p>
+            <div className="settings-group">
+              {([
+                ["motion", "Reduce motion", system.motion],
+                ["layers", "Reduce transparency", system.transparency],
+                ["contrast", "Increase contrast", system.contrast],
+              ] as const).map(([icon, label, on]) => (
+                <div key={label} className="settings-row">
+                  <span className="tile tile-sm gray"><Icon name={icon} /></span>
+                  <div className="settings-row-text"><strong>{label}</strong></div>
+                  <span className={`settings-value ${on ? "is-on" : ""}`}>{on ? "On" : "Off"}</span>
+                </div>
+              ))}
+            </div>
+            <p className="settings-footer">Change these in your device settings; Medusa updates straight away.</p>
           </>
         )}
       </dialog>

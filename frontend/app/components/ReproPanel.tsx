@@ -1,7 +1,11 @@
 "use client";
 
+import { memo } from "react";
 import type { InvestigatorReport, LogEvent, Mode, ReproAttempt } from "../../lib/api";
+import AutoOpenDetails from "./AutoOpenDetails";
 import Badge, { type Tone } from "./Badge";
+import CodeBlock from "./CodeBlock";
+import Icon from "./Icon";
 import LogView from "./LogView";
 
 const STATUS: Record<ReproAttempt["status"], { label: string; tone: Tone }> = {
@@ -12,12 +16,13 @@ const STATUS: Record<ReproAttempt["status"], { label: string; tone: Tone }> = {
   error: { label: "Error", tone: "red" },
 };
 
-const INVESTIGATORS: Record<string, { label: string; tone: Tone }> = {
-  bob_replay: { label: "Recorded Bob session", tone: "violet" },
-  bob: { label: "Investigator: Bob (live)", tone: "violet" },
-  granite: { label: "Investigator: Granite (live)", tone: "blue" },
-  bob_and_granite: { label: "Investigators: Bob + Granite (independent)", tone: "violet" },
-  unavailable: { label: "Investigators unavailable", tone: "amber" },
+/** Who investigated, as plain words for the meta line under the heading. */
+const INVESTIGATORS: Record<string, string> = {
+  bob_replay: "Recorded Bob session",
+  bob: "Bob (live)",
+  granite: "Granite (live)",
+  bob_and_granite: "Bob + Granite, independently",
+  unavailable: "Investigators unavailable",
 };
 
 const REPORT_STATUS: Record<InvestigatorReport["status"], { label: string; tone: Tone }> = {
@@ -28,12 +33,13 @@ const REPORT_STATUS: Record<InvestigatorReport["status"], { label: string; tone:
 };
 
 function InvestigatorCard({ report }: { report: InvestigatorReport }) {
-  const name = report.investigator === "bob" ? "IBM Bob" : "Granite";
+  const bob = report.investigator === "bob";
   const status = REPORT_STATUS[report.status];
   return (
     <div className="inset-card">
-      <div className="badges">
-        <span className="inset-card-title">{name}</span>
+      <div className="investigator-head">
+        <span className={`tile tile-sm ${bob ? "" : "cyan"}`}><Icon name={bob ? "bob" : "granite"} /></span>
+        <span className="inset-card-title">{bob ? "IBM Bob" : "Granite"}</span>
         <Badge tone={status.tone}>{status.label}</Badge>
         {report.recorded && <Badge tone="violet">Recorded session</Badge>}
       </div>
@@ -88,31 +94,37 @@ interface Props {
   error: string | null;
 }
 
-export default function ReproPanel({ mode, attempt, log, error }: Props) {
+/**
+ * The reproduce step. Heading, one status, and a quiet meta line (where it
+ * ran, who investigated, how long); then the finding; then the evidence. The
+ * run log opens while it runs and stays open until the reader folds it.
+ */
+// Memoized so the debug stream that follows doesn't re-render it.
+export default memo(function ReproPanel({ mode, attempt, log, error }: Props) {
   const status = attempt?.status ?? "running";
-  const investigators = attempt?.investigator_source ? INVESTIGATORS[attempt.investigator_source] : null;
+  const running = status === "running" && !error;
   const finished = attempt && attempt.status !== "running";
   const elapsed = finished ? elapsedSeconds(log) : null;
+  const meta = [
+    mode === "sandboxed" ? "Isolated sandbox" : "Analysis only, not executed",
+    attempt?.investigator_source ? INVESTIGATORS[attempt.investigator_source] : null,
+    elapsed !== null ? `${elapsed}s` : null,
+  ].filter(Boolean);
 
   return (
-    <section className="card panel-card">
-      <div className="badges">
-        <h3 className="headline panel-heading-title">Reproduce</h3>
-        <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
-        {elapsed !== null && <span className="panel-meta">{elapsed}s</span>}
-        {investigators && <Badge tone={investigators.tone}>{investigators.label}</Badge>}
-        <Badge tone={mode === "sandboxed" ? "green" : "amber"}>
-          {mode === "sandboxed" ? "Runs in isolated sandbox" : "Analysis only, not executed"}
-        </Badge>
-      </div>
+    <section className="card step-card" aria-labelledby="repro-heading">
+      <header className="step-head">
+        <span className="tile"><Icon name="play" /></span>
+        <div className="step-head-text">
+          <div className="step-title-row">
+            <h3 id="repro-heading" className="headline">Reproduce</h3>
+            <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
+          </div>
+          <p className="step-meta">{meta.join(" · ")}</p>
+        </div>
+      </header>
 
-      {finished && attempt.root_cause && (
-        <p className="panel-summary">
-          {firstSentence(attempt.root_cause)}
-        </p>
-      )}
-
-      <LogView events={log} />
+      {finished && attempt.root_cause && <p className="panel-summary">{firstSentence(attempt.root_cause)}</p>}
 
       {error && (
         <p role="alert" className="alert">
@@ -120,15 +132,21 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
         </p>
       )}
 
+      {/* Open while the run streams; it doesn't fold itself away when the run ends, so the
+          page never shrinks under the reader (collapse it by hand). */}
+      <AutoOpenDetails openWhen={running || status === "error" || !attempt?.root_cause}>
+        <summary>
+          <Icon name="chevron" />
+          Run log{log.length > 0 && <span className="disclosure-count">{log.length}</span>}
+        </summary>
+        <LogView events={log} busy={running} />
+      </AutoOpenDetails>
+
       {finished && attempt.reproducer_test && (
-        <details className="rounded-md border border-gray-200 dark:border-gray-800 p-3 text-sm" open>
-          <summary className="cursor-pointer font-medium">
-            Reproducer test (failed on the original code in the sandbox)
-          </summary>
-          <pre className="mt-2 max-h-72 overflow-auto rounded bg-gray-50 dark:bg-gray-900 p-2 font-mono text-xs leading-relaxed">
-            {attempt.reproducer_test}
-          </pre>
-        </details>
+        <div className="stack">
+          <p className="field-hint">This test failed on the original code in the sandbox.</p>
+          <CodeBlock code={attempt.reproducer_test} title="Reproducer test" />
+        </div>
       )}
 
       {finished && attempt.investigators.length > 0 && (
@@ -160,4 +178,4 @@ export default function ReproPanel({ mode, attempt, log, error }: Props) {
       )}
     </section>
   );
-}
+});
