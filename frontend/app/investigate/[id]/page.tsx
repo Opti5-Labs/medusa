@@ -126,6 +126,7 @@ function reducer(state: State, action: Action): State {
 interface Step {
   label: string;
   state: "idle" | "running" | "done" | "failed";
+  failedText?: string; // what "failed" means for this step, for screen readers
 }
 
 /** Reproduce → fixes → recommendation, each showing where it is. Status, always visible. */
@@ -146,7 +147,7 @@ function RunSteps({ steps }: { steps: Step[] }) {
           <span>
             {s.label}
             <span className="sr-only">
-              {s.state === "idle" ? ", not started" : s.state === "running" ? ", running" : s.state === "done" ? ", done" : ", did not complete"}
+              {s.state === "idle" ? ", not started" : s.state === "running" ? ", running" : s.state === "done" ? ", done" : `, ${s.failedText ?? "did not complete"}`}
             </span>
           </span>
         </li>
@@ -313,8 +314,10 @@ function Investigate() {
       state: !session ? "idle" : state.debug.error ? "failed" : state.debug.done ? "done" : "running",
     },
     {
-      label: "Recommend",
+      // Finishing without a recommendation is an outcome, not a crash: no patch passed.
+      label: state.debug.done && !state.debug.recommendation && !state.debug.error ? "No fix recommended" : "Recommend",
       state: !state.debug.done ? "idle" : state.debug.recommendation ? "done" : "failed",
+      failedText: state.debug.error ? "did not complete" : "no patch passed",
     },
   ];
 

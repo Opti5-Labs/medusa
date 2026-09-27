@@ -183,10 +183,35 @@ def _overlay_generated(repo: Path) -> None:
 _SHOWN_SUITE_FAILURES = 20
 
 
+def _broke_itself(report, repo: Path) -> bool:
+    """
+    Whether a failing reproducer test crashed on its own (a missing file, a bad
+    import, a typo) rather than showing the bug. It shows the bug when it
+    fails on an assertion (including pytest.raises / pytest.fail) or when the
+    exception is raised inside the project's own code.
+    """
+    longrepr = report.longrepr
+    crash = getattr(longrepr, "reprcrash", None)
+    message = (getattr(crash, "message", "") or "").lstrip()
+    if message.startswith(("AssertionError", "assert ", "Failed:")):
+        return False
+    traceback = getattr(longrepr, "reprtraceback", None)
+    for entry in getattr(traceback, "reprentries", None) or []:
+        location = getattr(entry, "reprfileloc", None)
+        if location is None:
+            continue
+        path = Path(location.path)
+        path = (path if path.is_absolute() else repo / path).resolve()
+        if path.is_relative_to(repo.resolve()) and path.name != REPRO_NAME:
+            return False  # raised in the project's code: that is the bug
+    return True
+
+
 class _Collector:
     """Counts outcomes per group: the reproducer test vs the rest of the suite."""
 
-    def __init__(self) -> None:
+    def __init__(self, repo: Path) -> None:
+        self.repo = repo
         self.groups = {
             name: {"passed": 0, "failed": 0, "errors": 0, "total": 0, "failures": []}
             for name in ("reproducer", "suite")
@@ -209,6 +234,9 @@ class _Collector:
         g["total"] += 1
         # A setup failure (fixture/import error) is an error, not a test failure.
         outcome = "passed" if report.passed else "error" if report.when == "setup" else "failed"
+        broke = group == "reproducer" and outcome == "failed" and _broke_itself(report, self.repo)
+        if broke:
+            outcome = "error"  # the test is broken, not evidence of the bug
         if outcome == "passed":
             g["passed"] += 1
         else:
@@ -232,6 +260,8 @@ class _Collector:
         if outcome != "passed" and report.longrepr is not None:
             crash = getattr(report.longrepr, "reprcrash", None)
             detail = f"\n      {str(crash)[:400]}" if crash else ""
+        if broke:
+            detail += "\n      (the test crashed by itself, so it does not show the bug)"
         _say(f"{outcome.upper():6} [{group}] {report.nodeid}{detail}")
 
     def summary(self) -> str:
@@ -300,7 +330,7 @@ def test() -> int:
 
     import pytest  # from /deps when the repo pins its own, else the image's
 
-    collector = _Collector()
+    collector = _Collector(repo)
     # pytest's terminal plugin stays loaded (repo configs pass options such as
     # --color that need it); its report is captured, and the collector prints
     # the per-test lines Medusa reads.
