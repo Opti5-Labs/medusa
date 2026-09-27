@@ -14,7 +14,7 @@ Bob. See `app/architecture/curated.py` for the loader and
   generates the overview diagram (`ArchitectureReport.mermaid`) from this file
   at load time — it is never hand-written, so it can't drift from the JSON.
 - `detail.mmd` — the full 74-node diagram, extracted verbatim from
-  `optilearn-architecture.md` at the repo root. Served as
+  `source/optilearn-architecture.md`. Served as
   `ArchitectureReport.detail_mermaid` for a "show full detail" view. This is
   the *only* hand-written Mermaid in the system; it is still run through
   `mermaid.validate()` on load like any other diagram.
@@ -25,7 +25,7 @@ Bob. See `app/architecture/curated.py` for the loader and
 ## Provenance
 
 Both source documents (`optilearn-architecture.md`,
-`optilearn-architecture-detailed.md`, repo root) describe the **upstream**
+`optilearn-architecture-detailed.md`, both in `source/`) describe the **upstream**
 OptiLearn project (github.com/Ilakiancs/OptiLearn) in full — Electron shell,
 19-ish FastAPI routers, SQLite, FAISS, Ollama, the works. Medusa's sandboxed
 demo (`sandbox/optilearn/src/`) bundles only 7 real modules from it:
