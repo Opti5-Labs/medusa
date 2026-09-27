@@ -36,6 +36,7 @@ function pageTitle(pathname: string): string {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [solid, setSolid] = useState(false);
+  const [light, setLight] = useState(false);
   const [dialogContent, setDialogContent] = useState<"guide" | "appearance">("guide");
   const dialog = useRef<HTMLDialogElement>(null);
   const sheet = useSheet(dialog);
@@ -47,6 +48,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try { setSolid(localStorage.getItem("medusa:solid-surfaces") === "true"); } catch { /* Storage can be disabled. */ }
+  }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      const enabled = document.documentElement.classList.contains("light");
+      setLight(enabled);
+      document.querySelector('meta[name="theme-color"]')?.setAttribute("content", enabled ? "#fafafb" : "#0b0b0c");
+    };
+    sync();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== "medusa:theme" && event.key !== null) return;
+      const enabled = event.newValue === "light";
+      document.documentElement.classList.toggle("light", enabled);
+      document.documentElement.classList.toggle("dark", !enabled);
+      sync();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   // Inertial scrolling: the wheel sets a target and the content glides to it.
@@ -241,6 +260,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
   }
 
+  function toggleTheme() {
+    const enabled = !light;
+    document.documentElement.classList.toggle("light", enabled);
+    document.documentElement.classList.toggle("dark", !enabled);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", enabled ? "#fafafb" : "#0b0b0c");
+    setLight(enabled);
+    try { localStorage.setItem("medusa:theme", enabled ? "light" : "dark"); } catch { /* Keep the preference for this visit. */ }
+  }
+
   return (
     <div className={`workspace ${home ? "" : "route"} ${solid ? "solid-surfaces" : ""}`}>
       <a className="skip-link" href="#main-content">Skip to content</a>
@@ -309,7 +337,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 and one button. Like Apple's, it has no close button: Continue is the way out. */}
             <div className="guide-hero" data-sheet-handle>
               <h2 id="dialog-title">How Medusa works</h2>
-              <p>From a repository to a tested fix, in three steps.</p>
+              <p>From a repository to a tested fix, with nothing left behind.</p>
             </div>
             <ol className="guide-features">
               <li style={{ "--i": 0 } as CSSProperties}>
@@ -324,8 +352,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <span className="guide-symbol is-green"><Icon name="shield" /></span>
                 <div><strong>Verify</strong><p>On the OptiLearn demo, every fix runs the tests in a sandbox; the one that passes is recommended.</p></div>
               </li>
+              <li style={{ "--i": 3 } as CSSProperties}>
+                <span className="guide-symbol is-amber"><Icon name="history" /></span>
+                <div><strong>Forget</strong><p>Nothing is kept. Uploads, scans and their results are deleted from our servers 30 minutes after they run.</p></div>
+              </li>
             </ol>
-            <p className="guide-footnote">Other repositories are read as text, so their fixes are not tested.</p>
             <button className="btn btn-primary btn-lg guide-done" onClick={sheet.close}>Continue</button>
           </>
         ) : (
@@ -335,6 +366,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <button className="icon-button sheet-close" aria-label="Close" onClick={sheet.close}><Icon name="close" /></button>
               <h2 id="dialog-title" className="sheet-title">Appearance</h2>
             </div>
+            <div className="settings-group">
+              <div className="settings-row">
+                <span className="tile tile-sm"><Icon name="appearance" /></span>
+                <div className="settings-row-text"><strong id="light-label">Light mode</strong></div>
+                <button type="button" role="switch" aria-checked={light} aria-labelledby="light-label" aria-describedby="light-note" className={`toggle ${light ? "on" : ""}`} onClick={toggleTheme}><span /></button>
+              </div>
+            </div>
+            <p id="light-note" className="settings-footer theme-note">Pearl white, frosted glass, and soft iridescent accents.</p>
             <div className="settings-group">
               <div className="settings-row">
                 <span className="tile tile-sm"><Icon name="layers" /></span>

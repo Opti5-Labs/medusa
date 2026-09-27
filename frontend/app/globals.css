@@ -3279,6 +3279,9 @@
 .guide-symbol.is-green {
   color: #5fe0a8;
 }
+.guide-symbol.is-amber {
+  color: #ffc27a;
+}
 .guide-features strong {
   display: block;
   font-size: 15px;
@@ -3291,17 +3294,9 @@
   line-height: 1.45;
   text-wrap: pretty;
 }
-.workspace-dialog .guide-footnote {
-  margin: 28px 8px 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--label-3);
-  text-align: center;
-  text-wrap: balance;
-}
 .guide-done {
   width: 100%;
-  margin-top: 16px;
+  margin-top: 32px;
 }
 .settings-group {
   display: grid;

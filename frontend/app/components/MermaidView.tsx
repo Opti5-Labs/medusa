@@ -30,13 +30,17 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   const mounted = useRef(false);
   const host = useRef<HTMLDivElement>(null);
 
-  // Re-render if the OS colour scheme changes while this diagram is on screen.
+  // Follow the selected app theme, including changes from another browser tab.
   useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => setThemeTick((t) => t + 1);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    let dark = document.documentElement.classList.contains("dark");
+    const observer = new MutationObserver(() => {
+      const next = document.documentElement.classList.contains("dark");
+      if (next === dark) return;
+      dark = next;
+      setThemeTick((t) => t + 1);
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -89,8 +93,7 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
           startOnLoad: false,
           securityLevel: "strict",
           htmlLabels: false,
-          // The app is dark-only, so the diagram always uses the dark theme.
-          theme: "dark",
+          theme: document.documentElement.classList.contains("dark") ? "dark" : "default",
           flowchart: { htmlLabels: false, useMaxWidth: true },
         });
         await mermaid.parse(source);
