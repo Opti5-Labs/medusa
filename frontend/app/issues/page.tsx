@@ -155,10 +155,10 @@ function DerivedArchitecture({ scanId }: { scanId: string }) {
             )}
           </div>
 
-          {report.mermaid ? (
+          {report.detail_mermaid || report.mermaid ? (
             <div className="architecture-diagram">
               <MermaidView
-                source={report.mermaid}
+                source={report.detail_mermaid ?? report.mermaid}
                 id={report.architecture_id}
                 fallback={<ComponentFallbackList report={report} />}
               />

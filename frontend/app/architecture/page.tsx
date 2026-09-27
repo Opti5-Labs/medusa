@@ -266,12 +266,12 @@ function ReportView({ report }: { report: ArchitectureReport }) {
         </div>
       )}
 
-      {report.mermaid ? (
+      {report.detail_mermaid || report.mermaid ? (
         <section className="section" aria-labelledby="diagram-heading">
           <div className="section-head">
             <h3 id="diagram-heading" className="headline">Diagram</h3>
             <div className="actions">
-              <CopyButton text={report.mermaid} label="Copy source" />
+              <CopyButton text={report.detail_mermaid ?? report.mermaid} label="Copy source" />
               <a href={getArchitectureDownloadUrl(report.architecture_id, "mermaid")} className="btn btn-secondary btn-sm">
                 <Icon name="upload" className="icon-download" aria-hidden="true" />.mmd
               </a>
@@ -282,23 +282,23 @@ function ReportView({ report }: { report: ArchitectureReport }) {
           </div>
           <div className="architecture-diagram">
             <MermaidView
-              source={report.mermaid}
-              id={`${report.architecture_id}-overview`}
+              source={report.detail_mermaid ?? report.mermaid}
+              id={`${report.architecture_id}-detail`}
               fallback={<p className="field-hint">See the components below for the same information.</p>}
             />
           </div>
-          {report.detail_mermaid && (
+          {report.detail_mermaid && report.mermaid && (
             <details className="disclosure">
-              <summary><Icon name="chevron" aria-hidden="true" />Full detail diagram</summary>
+              <summary><Icon name="chevron" aria-hidden="true" />Simple overview diagram</summary>
               <div className="stack detail-diagram">
                 <div className="actions">
-                  <CopyButton text={report.detail_mermaid} label="Copy source" />
+                  <CopyButton text={report.mermaid} label="Copy source" />
                 </div>
                 <div className="architecture-diagram">
                   <MermaidView
-                    source={report.detail_mermaid}
-                    id={`${report.architecture_id}-detail`}
-                    fallback={<pre className="source-block">{report.detail_mermaid}</pre>}
+                    source={report.mermaid}
+                    id={`${report.architecture_id}-overview`}
+                    fallback={<pre className="source-block">{report.mermaid}</pre>}
                   />
                 </div>
               </div>
