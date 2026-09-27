@@ -1,7 +1,6 @@
 # CLAUDE.md
 
 Context for AI coding agents working in this repo. Read this before changing anything.
-Full plan, timeline and team split: see `PROJECT.md`.
 
 ## What this is
 
@@ -50,7 +49,6 @@ Nothing persists between sessions. Run state lives in an in-memory store plus a 
 ```
 .
 ├── CLAUDE.md
-├── PROJECT.md
 ├── README.md
 ├── .env.example
 ├── bob_sessions/                  # Bob IDE task summary screenshots (PNG). Do not touch.
