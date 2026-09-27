@@ -14,8 +14,11 @@ import {
 import { useArchitecture } from "../../lib/useArchitecture";
 import AssessingStatus from "../components/AssessingStatus";
 import Badge, { type Tone } from "../components/Badge";
+import Icon from "../components/Icon";
 import LogView from "../components/LogView";
 import MermaidView from "../components/MermaidView";
+import { ExpiredScan, LoadingState } from "../components/EmptyState";
+import MoreText from "../components/MoreText";
 
 const SOURCE_BADGE: Record<ArchitectureReport["source"], { label: string; tone: Tone }> = {
   curated: { label: "Curated", tone: "violet" },
@@ -29,6 +32,12 @@ const STATUS_BADGE: Record<ArchitectureReport["status"], { label: string; tone: 
   partial: { label: "Partial", tone: "amber" },
   unavailable: { label: "Unavailable", tone: "amber" },
   error: { label: "Error", tone: "red" },
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  demo: "Demo (OptiLearn)",
+  github: "GitHub repository",
+  zip: "Uploaded zip",
 };
 
 const ASSESSING_STEPS = [
@@ -54,8 +63,9 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
           })
           .catch(() => {});
       }}
-      className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
+      className="btn btn-secondary btn-sm"
     >
+      <Icon name={copied ? "check" : "code"} aria-hidden="true" />
       {copied ? "Copied" : label}
     </button>
   );
@@ -64,23 +74,19 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
 function EvidenceList({ evidence }: { evidence: EvidenceRef[] }) {
   if (evidence.length === 0) return null;
   return (
-    <ul className="space-y-0.5">
+    <ul className="evidence-list">
       {evidence.map((ev, i) => (
-        <li key={i} className="font-mono text-xs text-gray-500 dark:text-gray-500 break-all">
-          {ev.verified ? (
+        <li key={i} className="code-ref">
+          {ev.verified || !ev.url ? (
             <span>{ev.path}</span>
           ) : (
-            <a
-              href={ev.url ?? undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 dark:text-blue-400 hover:underline"
-            >
+            <a href={ev.url} target="_blank" rel="noopener noreferrer" className="external-link">
               {ev.path} (upstream)
+              <Icon name="arrow" aria-hidden="true" />
             </a>
           )}
           {ev.line && <span>{`:${ev.line}`}</span>}
-          {ev.note && <span className="text-gray-400"> — {ev.note}</span>}
+          {ev.note && <span> — {ev.note}</span>}
         </li>
       ))}
     </ul>
@@ -89,41 +95,42 @@ function EvidenceList({ evidence }: { evidence: EvidenceRef[] }) {
 
 function ComponentCard({ c }: { c: ArchitectureComponent }) {
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-1.5 min-w-0">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="font-semibold text-sm">{c.label}</span>
+    <article className="card component-card">
+      <div className="component-head">
+        <h4>{c.label}</h4>
+        <span className="component-confidence" title="Confidence">{Math.round(c.confidence * 100)}%</span>
+      </div>
+      <div className="badges">
         <Badge>{c.type.replace(/_/g, " ")}</Badge>
         {c.assisted_by === "model" && <Badge tone="amber">AI-named</Badge>}
-        <span className="text-xs text-gray-400">{Math.round(c.confidence * 100)}% confidence</span>
+        <span className="component-files">
+          {c.file_count} file{c.file_count === 1 ? "" : "s"}
+        </span>
       </div>
-      {c.description && (
-        <p className="text-sm text-gray-600 dark:text-gray-400">{c.description}</p>
-      )}
-      <p className="text-xs text-gray-400">
-        {c.file_count} file{c.file_count === 1 ? "" : "s"}
-      </p>
+      {c.description && <p className="component-description">{c.description}</p>}
       {c.evidence.length > 0 && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
-            Evidence
-          </summary>
-          <div className="mt-1">
-            <EvidenceList evidence={c.evidence} />
-          </div>
+        <details className="disclosure">
+          <summary><Icon name="chevron" aria-hidden="true" />Evidence</summary>
+          <EvidenceList evidence={c.evidence} />
         </details>
       )}
-    </div>
+    </article>
   );
 }
 
 function RelationshipRow({ r, labelFor }: { r: ArchitectureRelationship; labelFor: (id: string) => string }) {
   return (
-    <li className="text-sm border-b border-gray-100 dark:border-gray-900 pb-2 last:border-0">
-      <span className="font-medium">{labelFor(r.source)}</span>{" "}
-      <span className="text-gray-400">--{r.type}--&gt;</span>{" "}
-      <span className="font-medium">{labelFor(r.target)}</span>
-      {r.assisted_by === "model" && <Badge tone="amber">AI</Badge>}
-      {r.explanation && <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{r.explanation}</p>}
+    <li>
+      <div className="relation-line">
+        <strong>{labelFor(r.source)}</strong>
+        <span className="relation-type">
+          <Icon name="arrow" aria-hidden="true" />
+          {r.type.replace(/_/g, " ")}
+        </span>
+        <strong>{labelFor(r.target)}</strong>
+        {r.assisted_by === "model" && <Badge tone="amber">AI</Badge>}
+      </div>
+      {r.explanation && <p>{r.explanation}</p>}
     </li>
   );
 }
@@ -135,6 +142,7 @@ function ArchitectureContent() {
   const scanId = params.get("scan");
 
   const [scan, setScan] = useState<ScanResult | null | undefined>(undefined);
+  const [repoName, setRepoName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!scanId) {
@@ -151,66 +159,62 @@ function ArchitectureContent() {
     } catch {
       setScan(null);
     }
+    // Set by the scan entry points (see rememberScan); absent for older links.
+    setRepoName(sessionStorage.getItem(`scan:${scanId}:name`));
   }, [scanId]);
 
   const { report, log, error } = useArchitecture(scanId);
 
   if (!scanId || scan === null) {
     return (
-      <div className="space-y-4 text-center py-16">
-        <p className="text-gray-500 dark:text-gray-400">Session expired or no scan data found.</p>
-        <Link
-          href="/"
-          className="inline-block px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
-        >
-          Start again
-        </Link>
-      </div>
+      <ExpiredScan />
     );
   }
 
   const running = !report || report.status === "running";
 
   return (
-    <div className="space-y-8">
-      <Link
-        href={`/issues?scan=${scanId}`}
-        className="inline-block text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
-      >
-        Back to issues
-      </Link>
-
-      <div className="space-y-3">
-        <h2 className="text-2xl font-semibold tracking-tight">Project Architecture</h2>
+    <div className="page">
+      <header className="page-header">
+        <Link href={`/issues?scan=${scanId}`} className="back-link"><Icon name="chevron" />Scan results</Link>
+        <h2 className="title-1">Architecture</h2>
         {scan && (
-          <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+          <dl className="facts">
             <div>
-              <dt className="text-gray-500 dark:text-gray-400">Source</dt>
-              <dd className="font-medium">{scan.repo_source}</dd>
+              <dt>Repository</dt>
+              <dd className="repo-title">{repoName ?? SOURCE_LABEL[scan.repo_source] ?? scan.repo_source}</dd>
             </div>
             <div>
-              <dt className="text-gray-500 dark:text-gray-400">Language</dt>
-              <dd className="font-medium">{scan.language}</dd>
+              <dt>Language</dt>
+              <dd>{scan.language}</dd>
             </div>
+            {report && report.status !== "running" && (
+              <div>
+                <dt>Components</dt>
+                <dd>{report.components.length}</dd>
+              </div>
+            )}
           </dl>
         )}
         {report && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={SOURCE_BADGE[report.source].tone}>{SOURCE_BADGE[report.source].label}</Badge>
-            <Badge tone={STATUS_BADGE[report.status].tone}>{STATUS_BADGE[report.status].label}</Badge>
+          <div className="provenance">
+            <div className="badges">
+              <Badge tone={SOURCE_BADGE[report.source].tone}>{SOURCE_BADGE[report.source].label}</Badge>
+              <Badge tone={STATUS_BADGE[report.status].tone}>{STATUS_BADGE[report.status].label}</Badge>
+            </div>
+            <p>
+              {report.source === "curated"
+                ? "A hand-authored reference for the OptiLearn demo (optilearn-architecture.md)."
+                : "Inferred from repository files by static analysis. Nothing here was executed."}
+            </p>
           </div>
         )}
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          {report?.source === "curated"
-            ? "A curated, hand-authored reference diagram for the OptiLearn demo. Its sources are optilearn-architecture.md in the repository root and backend/app/architecture/curated/optilearn/README.md."
-            : "Inferred from repository files by static analysis. Nothing here was executed."}
-        </p>
-      </div>
+      </header>
 
-      {error && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p role="alert" className="alert">{error}</p>}
 
-      {running && (
-        <div className="space-y-4">
+      {running && !error && (
+        <div className="stack">
           <AssessingStatus
             steps={ASSESSING_STEPS}
             note="General repositories are read as text only — nothing is executed."
@@ -219,9 +223,7 @@ function ArchitectureContent() {
         </div>
       )}
 
-      {report && report.status !== "running" && (
-        <ReportView report={report} />
-      )}
+      {report && report.status !== "running" && <ReportView report={report} />}
     </div>
   );
 }
@@ -233,58 +235,105 @@ function ReportView({ report }: { report: ArchitectureReport }) {
   }, [report.components]);
 
   const stack = report.technology_stack;
-  const hasStack =
-    stack.languages.length + stack.frameworks.length + stack.build_systems.length +
-    stack.package_managers.length + stack.test_frameworks.length > 0;
+  // The same name can come from two detectors (Vite as a framework and a build system).
+  const stackItems = [
+    ...new Set([
+      ...stack.languages,
+      ...stack.frameworks,
+      ...stack.build_systems,
+      ...stack.package_managers,
+      ...stack.test_frameworks,
+    ]),
+  ];
+  const hasSurroundings =
+    report.external_services.length > 0 || report.data_stores.length > 0 || report.deployment.length > 0;
 
   return (
-    <div className="space-y-8">
-      {report.summary && (
-        <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{report.summary}</p>
-      )}
+    <>
+      {report.summary && <MoreText text={report.summary} className="page-lede arch-summary" />}
 
       {(report.status === "partial" || report.status === "unavailable") && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/10 p-4 space-y-2">
-          <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+        <div className="notice">
+          <p className="notice-title">
             {report.status === "partial" ? "Partial result" : "Architecture unavailable"}
           </p>
-          {report.warnings.map((w, i) => (
-            <p key={i} className="text-sm text-amber-800 dark:text-amber-400">{w}</p>
-          ))}
+          {report.warnings.map((w, i) => <p key={i}>{w}</p>)}
           {report.narrowing_suggestions.length > 0 && (
-            <ul className="list-disc list-inside space-y-0.5">
-              {report.narrowing_suggestions.map((s, i) => (
-                <li key={i} className="text-sm text-amber-800 dark:text-amber-400">{s}</li>
-              ))}
+            <ul>
+              {report.narrowing_suggestions.map((s, i) => <li key={i}>{s}</li>)}
             </ul>
           )}
         </div>
       )}
 
-      {hasStack && (
-        <section className="space-y-2">
-          <h3 className="font-medium text-gray-700 dark:text-gray-300">Technology stack</h3>
-          <div className="flex flex-wrap gap-1.5">
-            {[...stack.languages, ...stack.frameworks, ...stack.build_systems, ...stack.package_managers, ...stack.test_frameworks].map(
-              (item, i) => <Badge key={`${item}-${i}`}>{item}</Badge>
-            )}
+      {report.mermaid ? (
+        <section className="section" aria-labelledby="diagram-heading">
+          <div className="section-head">
+            <h3 id="diagram-heading" className="headline">Diagram</h3>
+            <div className="actions">
+              <CopyButton text={report.mermaid} label="Copy source" />
+              <a href={getArchitectureDownloadUrl(report.architecture_id, "mermaid")} className="btn btn-secondary btn-sm">
+                <Icon name="upload" className="icon-download" aria-hidden="true" />.mmd
+              </a>
+              <a href={getArchitectureDownloadUrl(report.architecture_id, "json")} className="btn btn-secondary btn-sm">
+                <Icon name="upload" className="icon-download" aria-hidden="true" />JSON
+              </a>
+            </div>
+          </div>
+          <div className="architecture-diagram">
+            <MermaidView
+              source={report.mermaid}
+              id={`${report.architecture_id}-overview`}
+              fallback={<p className="field-hint">See the components below for the same information.</p>}
+            />
+          </div>
+          {report.detail_mermaid && (
+            <details className="disclosure">
+              <summary><Icon name="chevron" aria-hidden="true" />Full detail diagram</summary>
+              <div className="stack detail-diagram">
+                <div className="actions">
+                  <CopyButton text={report.detail_mermaid} label="Copy source" />
+                </div>
+                <div className="architecture-diagram">
+                  <MermaidView
+                    source={report.detail_mermaid}
+                    id={`${report.architecture_id}-detail`}
+                    fallback={<pre className="source-block">{report.detail_mermaid}</pre>}
+                  />
+                </div>
+              </div>
+            </details>
+          )}
+        </section>
+      ) : (
+        report.status === "complete" && (
+          <p className="field-hint">No diagram for this repository; the components below describe it.</p>
+        )
+      )}
+
+      {stackItems.length > 0 && (
+        <section className="section" aria-labelledby="stack-heading">
+          <h3 id="stack-heading" className="headline">Technology stack</h3>
+          <div className="badges">
+            {stackItems.map((item) => <Badge key={item}>{item}</Badge>)}
           </div>
           {stack.unsupported_languages.length > 0 && (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Not statically parsed: {stack.unsupported_languages.join(", ")}
-            </p>
+            <p className="field-hint">Not statically parsed: {stack.unsupported_languages.join(", ")}</p>
           )}
         </section>
       )}
 
       {report.entrypoints.length > 0 && (
-        <section className="space-y-2">
-          <h3 className="font-medium text-gray-700 dark:text-gray-300">Entrypoints</h3>
-          <ul className="space-y-1">
+        <section className="section" aria-labelledby="entry-heading">
+          <h3 id="entry-heading" className="headline">Entrypoints</h3>
+          <ul className="grouped-list">
             {report.entrypoints.map((e, i) => (
-              <li key={i} className="text-sm">
-                <code className="font-mono text-xs">{e.path}</code>{" "}
-                <span className="text-gray-500 dark:text-gray-400">({e.kind}) {e.detail}</span>
+              <li key={i}>
+                <div className="row-title">
+                  <code className="code-ref">{e.path}</code>
+                  <Badge>{e.kind.replace(/_/g, " ")}</Badge>
+                </div>
+                {e.detail && <p>{e.detail}</p>}
               </li>
             ))}
           </ul>
@@ -292,178 +341,89 @@ function ReportView({ report }: { report: ArchitectureReport }) {
       )}
 
       {report.components.length > 0 && (
-        <section className="space-y-2">
-          <h3 className="font-medium text-gray-700 dark:text-gray-300">
-            Components ({report.components.length})
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {report.components.map((c) => (
-              <ComponentCard key={c.id} c={c} />
-            ))}
+        <section className="section" aria-labelledby="components-heading">
+          <div className="section-head">
+            <h3 id="components-heading" className="headline">Components</h3>
+            <span className="field-hint">Percentages are confidence</span>
+          </div>
+          <div className="component-grid">
+            {report.components.map((c) => <ComponentCard key={c.id} c={c} />)}
           </div>
         </section>
       )}
 
       {report.relationships.length > 0 && (
-        <section className="space-y-2">
-          <h3 className="font-medium text-gray-700 dark:text-gray-300">
-            Relationships ({report.relationships.length})
-          </h3>
-          <ul className="space-y-2">
-            {report.relationships.map((r, i) => (
-              <RelationshipRow key={i} r={r} labelFor={componentLabel} />
-            ))}
+        <section className="section" aria-labelledby="relations-heading">
+          <h3 id="relations-heading" className="headline">Relationships</h3>
+          <ul className="grouped-list relation-list">
+            {report.relationships.map((r, i) => <RelationshipRow key={i} r={r} labelFor={componentLabel} />)}
           </ul>
         </section>
       )}
 
-      {(report.external_services.length > 0 || report.data_stores.length > 0 || report.deployment.length > 0) && (
-        <section className="grid gap-4 sm:grid-cols-3">
-          {report.data_stores.length > 0 && (
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Data stores</h4>
-              <ul className="text-sm space-y-0.5">
-                {report.data_stores.map((d, i) => <li key={i}>{d.name}</li>)}
-              </ul>
-            </div>
-          )}
-          {report.external_services.length > 0 && (
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">External services</h4>
-              <ul className="text-sm space-y-0.5">
-                {report.external_services.map((e, i) => <li key={i}>{e.name}</li>)}
-              </ul>
-            </div>
-          )}
-          {report.deployment.length > 0 && (
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Deployment</h4>
-              <ul className="text-sm space-y-0.5">
-                {report.deployment.map((d, i) => (
-                  <li key={i}>
-                    <code className="font-mono text-xs">{d.path}</code>
-                    {d.services.length > 0 && <span className="text-gray-500"> — {d.services.join(", ")}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+      {hasSurroundings && (
+        <section className="section" aria-labelledby="around-heading">
+          <h3 id="around-heading" className="headline">Around the code</h3>
+          <div className="surroundings">
+            {report.data_stores.length > 0 && (
+              <div className="card">
+                <h4>Data stores</h4>
+                <ul>{report.data_stores.map((d, i) => <li key={i}>{d.name}</li>)}</ul>
+              </div>
+            )}
+            {report.external_services.length > 0 && (
+              <div className="card">
+                <h4>External services</h4>
+                <ul>{report.external_services.map((e, i) => <li key={i}>{e.name}</li>)}</ul>
+              </div>
+            )}
+            {report.deployment.length > 0 && (
+              <div className="card">
+                <h4>Deployment</h4>
+                <ul>
+                  {report.deployment.map((d, i) => (
+                    <li key={i}>
+                      <code className="code-ref">{d.path}</code>
+                      {d.services.length > 0 && <span> — {d.services.join(", ")}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </section>
-      )}
-
-      {report.mermaid ? (
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-700 dark:text-gray-300">Diagram</h3>
-            <div className="flex gap-2">
-              <CopyButton text={report.mermaid} label="Copy source" />
-              <a
-                href={getArchitectureDownloadUrl(report.architecture_id, "mermaid")}
-                className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
-              >
-                Download .mmd
-              </a>
-              <a
-                href={getArchitectureDownloadUrl(report.architecture_id, "json")}
-                className="text-xs px-2 py-1 rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
-              >
-                Download JSON
-              </a>
-            </div>
-          </div>
-          <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 overflow-x-auto bg-white dark:bg-gray-950">
-            <MermaidView
-              source={report.mermaid}
-              id={`${report.architecture_id}-overview`}
-              fallback={
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  See the component list above for the same information.
-                </p>
-              }
-            />
-          </div>
-          <details>
-            <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
-              View Mermaid source
-            </summary>
-            <pre className="mt-1 max-h-96 overflow-auto rounded-md bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 text-xs leading-relaxed font-mono whitespace-pre-wrap break-words">
-              {report.mermaid}
-            </pre>
-          </details>
-        </section>
-      ) : (
-        report.status === "complete" && (
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            No diagram was generated for this repository; see the component list above.
-          </p>
-        )
-      )}
-
-      {report.detail_mermaid && (
-        <details className="space-y-2">
-          <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">
-            Show full detail diagram
-          </summary>
-          <div className="flex justify-end">
-            <CopyButton text={report.detail_mermaid} label="Copy source" />
-          </div>
-          <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 overflow-x-auto bg-white dark:bg-gray-950">
-            <MermaidView
-              source={report.detail_mermaid}
-              id={`${report.architecture_id}-detail`}
-              fallback={
-                <pre className="max-h-96 overflow-auto text-xs leading-relaxed font-mono whitespace-pre-wrap break-words">
-                  {report.detail_mermaid}
-                </pre>
-              }
-            />
-          </div>
-        </details>
       )}
 
       {report.limitations.length > 0 && (
-        <section className="space-y-1">
-          <h3 className="font-medium text-gray-700 dark:text-gray-300">Limitations</h3>
-          <ul className="list-disc list-inside space-y-0.5">
-            {report.limitations.map((l, i) => (
-              <li key={i} className="text-sm text-gray-500 dark:text-gray-400">{l}</li>
-            ))}
+        <section className="section" aria-labelledby="limits-heading">
+          <h3 id="limits-heading" className="headline">Limitations</h3>
+          <ul className="grouped-list">
+            {report.limitations.map((l, i) => <li key={i}><p>{l}</p></li>)}
           </ul>
         </section>
       )}
 
       {report.coverage && (
-        <details className="text-sm">
-          <summary className="cursor-pointer text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
-            Coverage details
-          </summary>
-          <dl className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
-            <dt className="text-gray-500">Files discovered</dt>
-            <dd>{report.coverage.files_discovered}</dd>
-            <dt className="text-gray-500">Source files (recognised)</dt>
-            <dd>{report.coverage.source_files_discovered}</dd>
-            <dt className="text-gray-500">Parsed</dt>
-            <dd>{report.coverage.files_parsed} of {report.coverage.source_files_supported}</dd>
-            <dt className="text-gray-500">Tier</dt>
-            <dd>{report.coverage.tier}</dd>
+        <details className="disclosure">
+          <summary><Icon name="chevron" aria-hidden="true" />Coverage details</summary>
+          <dl className="facts coverage-facts">
+            <div><dt>Files discovered</dt><dd>{report.coverage.files_discovered}</dd></div>
+            <div><dt>Source files recognised</dt><dd>{report.coverage.source_files_discovered}</dd></div>
+            <div><dt>Parsed</dt><dd>{report.coverage.files_parsed} of {report.coverage.source_files_supported}</dd></div>
+            <div><dt>Tier</dt><dd>{report.coverage.tier}</dd></div>
             {report.coverage.limit_exceeded && (
-              <>
-                <dt className="text-gray-500">Limit exceeded</dt>
-                <dd className="font-mono">{report.coverage.limit_exceeded}</dd>
-              </>
+              <div><dt>Limit exceeded</dt><dd className="code-ref">{report.coverage.limit_exceeded}</dd></div>
             )}
           </dl>
         </details>
       )}
-    </div>
+    </>
   );
 }
 
 export default function ArchitecturePage() {
   return (
-    <Suspense
-      fallback={<div className="py-16 text-center text-gray-500 dark:text-gray-400">Loading…</div>}
-    >
+    <Suspense fallback={<LoadingState />}>
       <ArchitectureContent />
     </Suspense>
   );

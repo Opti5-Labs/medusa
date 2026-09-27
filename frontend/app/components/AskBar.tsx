@@ -22,6 +22,9 @@ import ThinkingOrb from "./ThinkingOrb";
 
 const PLACEHOLDER = "Ask about this repo: what is wrong, why, and how to fix it";
 const ISSUE_PLACEHOLDER = "Ask about this issue: why it happens, how to fix it";
+// Phones: the bar grows with its text (placeholder included), so keep it one line.
+const PLACEHOLDER_SHORT = "Ask about this repo";
+const ISSUE_PLACEHOLDER_SHORT = "Ask about this issue";
 const LOST_CONNECTION = "Lost the connection to the server. Please try again.";
 const PRIORITY_RANK ={ High: 0, Medium: 1, Low: 2 } as const;
 
@@ -135,6 +138,14 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
   const [active, setActive] = useState<{ msgId: string; askId: string } | null>(null);
   const [value, setValue] = useState("");
   const [panelOpen, setPanelOpen] = useState(true);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const query = matchMedia("(max-width: 739px)");
+    const read = () => setCompact(query.matches);
+    read();
+    query.addEventListener("change", read);
+    return () => query.removeEventListener("change", read);
+  }, []);
   const [expired, setExpired] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const latest = useRef<string | null>(null);
@@ -216,7 +227,7 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
+  }, [value, compact]);
 
   // "/" focuses the bar; Escape closes the answer panel.
   useEffect(() => {
@@ -271,7 +282,11 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
             rows={1}
             maxLength={1000}
             value={value}
-            placeholder={scopedId ? ISSUE_PLACEHOLDER : PLACEHOLDER}
+            placeholder={
+              compact
+                ? scopedId ? ISSUE_PLACEHOLDER_SHORT : PLACEHOLDER_SHORT
+                : scopedId ? ISSUE_PLACEHOLDER : PLACEHOLDER
+            }
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -289,7 +304,8 @@ function AskConversation({ scanId, scan }: { scanId: string; scan: ScanResult })
               aria-expanded={panelOpen}
               aria-label={panelOpen ? "Hide answers" : "Show answers"}
             >
-              {messages.length} {messages.length === 1 ? "answer" : "answers"}
+              {messages.length}
+              <span className="ask-toggle-label">{messages.length === 1 ? " answer" : " answers"}</span>
               <Icon name="chevron" />
             </button>
           )}

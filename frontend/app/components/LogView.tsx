@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { LogEvent } from "../../lib/api";
 
 const LEVEL_STYLES: Record<LogEvent["level"], string> = {
@@ -25,17 +25,34 @@ interface Props {
   showSource?: boolean;
   emptyText?: string;
   maxHeight?: string;
+  /** While the run is still going, end the log with a spinner row. */
+  busy?: boolean;
+  /** Number each line in a gutter, like a terminal pane in an editor. */
+  numbered?: boolean;
 }
 
+// One line. Events are append-only and never change, so earlier lines are skipped when a new
+// one arrives: a streaming log costs one line of work per event, not the whole log.
+const LogLine = memo(function LogLine({ event: e, showSource }: { event: LogEvent; showSource: boolean }) {
+  return (
+    <div className={`whitespace-pre-wrap break-words ${LEVEL_STYLES[e.level]}`}>
+      {showSource && (
+        <span className="text-gray-400 dark:text-gray-500 select-none">[{sourceLabel(e.source)}] </span>
+      )}
+      {e.message}
+    </div>
+  );
+});
+
 /** Scrolling live log. Sticks to the bottom unless the user has scrolled up. */
-export default function LogView({ events, showSource = true, emptyText = "Waiting…", maxHeight = "max-h-80" }: Props) {
+export default memo(function LogView({ events, showSource = true, emptyText = "Waiting…", maxHeight = "max-h-80", busy = false, numbered = false }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
   useEffect(() => {
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [events.length]);
+  }, [events.length, busy]);
 
   // Re-pin after reflows (e.g. the panel grid changing width) while stuck to the bottom.
   useEffect(() => {
@@ -61,22 +78,18 @@ export default function LogView({ events, showSource = true, emptyText = "Waitin
       }}
       role="log"
       aria-live="polite"
-      className={`${maxHeight} log-view`}
+      className={`${maxHeight} log-view ${numbered ? "is-numbered" : ""}`}
     >
       <div>
       {events.length === 0 ? (
         <p className="text-gray-400 dark:text-gray-600">{emptyText}</p>
       ) : (
-        events.map((e, i) => (
-          <div key={i} className={`whitespace-pre-wrap break-words ${LEVEL_STYLES[e.level]}`}>
-            {showSource && (
-              <span className="text-gray-400 dark:text-gray-500 select-none">[{sourceLabel(e.source)}] </span>
-            )}
-            {e.message}
-          </div>
-        ))
+        events.map((e, i) => <LogLine key={i} event={e} showSource={showSource} />)
+      )}
+      {busy && events.length > 0 && (
+        <div className="log-busy" aria-hidden="true"><span className="holo-spinner" />Working…</div>
       )}
       </div>
     </div>
   );
-}
+});

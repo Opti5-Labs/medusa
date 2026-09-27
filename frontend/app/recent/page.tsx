@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Icon from "../components/Icon";
 import { clearRecentScans, expiresAt, readRecentScans, type RecentScan } from "../../lib/recentScans";
+import EmptyState, { LoadingState } from "../components/EmptyState";
 
 const SOURCE = {
   github: { icon: "github", tone: "", label: "GitHub repository" },
@@ -34,7 +35,7 @@ export default function RecentScansPage() {
     };
   }, []);
 
-  if (scans === null) return <div className="page"><div className="empty-page">Loading…</div></div>;
+  if (scans === null) return <LoadingState />;
 
   return (
     <div className="page">
@@ -55,22 +56,21 @@ export default function RecentScansPage() {
           )}
         </div>
         <p className="page-lede">
-          Scans you ran in this browser tab. Each one is kept for 30 minutes, then deleted from the server and from this list.
+          Scans from this browser tab. Each is deleted, here and on the server, 30 minutes after it runs.
         </p>
       </header>
 
       {scans.length === 0 ? (
-        <div className="empty-page">
-          <span className="tile gray"><Icon name="history" /></span>
-          <div className="stack">
-            <p className="headline">No recent scans</p>
-            <p>Link a repository, upload a zip, or run the demo. Your scans appear here.</p>
-          </div>
-          <div className="actions">
-            <Link href="/scan/github" className="btn btn-primary">Link a repository</Link>
-            <Link href="/scan/upload" className="btn btn-secondary">Upload a zip</Link>
-          </div>
-        </div>
+        <EmptyState
+          icon="history"
+          title="No recent scans"
+          actions={[
+            { href: "/scan/github", label: "Link a repository" },
+            { href: "/scan/upload", label: "Upload a zip" },
+          ]}
+        >
+          Link a repository, upload a zip, or run the demo. Your scans appear here for 30 minutes.
+        </EmptyState>
       ) : (
         <section className="section" aria-labelledby="recent-count">
           <div className="section-head">
@@ -90,6 +90,10 @@ export default function RecentScansPage() {
                       <strong>{scan.name}</strong>
                       <small>
                         {source.label} · {scan.issues} {scan.issues === 1 ? "issue" : "issues"} · {scan.files} files analysed
+                      </small>
+                      {/* Phones: the expiry moves here and the right-hand column is hidden. */}
+                      <small className={`recent-expiry-inline ${left <= 5 ? "is-soon" : ""}`}>
+                        {left <= 1 ? "Expires in a minute" : `Expires in ${left} min`}
                       </small>
                     </span>
                     <span className="recent-when">

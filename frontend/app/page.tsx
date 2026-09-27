@@ -106,8 +106,14 @@ export default function Home() {
               ))}
             </h1>
             <p className="hero-description">
-              Medusa scans a repository for issues. IBM Bob and Granite then diagnose each one
-              independently and propose fixes. On the OptiLearn demo, every fix is tested in a sandbox.
+              <span className="copy-long">
+                Medusa scans a repository for issues. IBM Bob and Granite then diagnose each one
+                independently and propose fixes. On the OptiLearn demo, every fix is tested in a sandbox.
+              </span>
+              <span className="copy-short">
+                Find the issues in a repository. IBM Bob and Granite diagnose each one independently and
+                propose fixes, tested in a sandbox on the demo.
+              </span>
             </p>
             <form className="repository-launcher glass" onSubmit={(event) => {
               event.preventDefault();
@@ -119,7 +125,7 @@ export default function Home() {
               <input id="dashboard-repository" value={repository} onChange={(event) => setRepository(event.target.value)} ref={input} placeholder={STATIC_PLACEHOLDER} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} autoComplete="off" spellCheck={false} />
               <button className="launcher-submit" type="submit" aria-label="Scan this repository" disabled={!repository.trim()}><Icon name="arrow" /></button>
             </form>
-            <p className="launcher-caption"><Icon name="shield" /> Public repositories only. Code is read as text and never run.</p>
+            <p className="launcher-caption"><Icon name="shield" /><span className="copy-long">Public repositories only. Code is read as text and never run.</span><span className="copy-short">Public repos only. Read as text, never run.</span></p>
           </div>
           <DemoButton />
         </section>

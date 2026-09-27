@@ -8,6 +8,8 @@ import { useArchitecture } from "../../lib/useArchitecture";
 import Badge, { type Tone } from "../components/Badge";
 import Icon from "../components/Icon";
 import MermaidView from "../components/MermaidView";
+import { ExpiredScan, LoadingState } from "../components/EmptyState";
+import MoreText from "../components/MoreText";
 
 const PRIORITY_TONE: Record<string, Tone> = { High: "red", Medium: "amber", Low: "green" };
 
@@ -32,8 +34,11 @@ function linkify(text: string) {
         href={part}
         target="_blank"
         rel="noopener noreferrer"
+        className="external-link"
       >
-        {part}
+        {/* Show the address without its scheme; the arrow says it opens elsewhere. */}
+        {part.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+        <Icon name="arrow" aria-hidden="true" />
       </a>
     ) : (
       <span key={i}>{part}</span>
@@ -56,7 +61,7 @@ function IssueRow({ issue, scanId }: { issue: Issue; scanId: string }) {
 
       <div className="issue-body">
         <h3 className="headline">{issue.title}</h3>
-        <p className="issue-description">{issue.description}</p>
+        <MoreText text={issue.description} className="issue-description" />
       </div>
 
       {(issue.file || issue.github_url) && (
@@ -120,8 +125,9 @@ function DerivedArchitecture({ scanId }: { scanId: string }) {
     <section className="section" aria-labelledby="architecture-heading">
       <div className="section-head">
         <h3 id="architecture-heading" className="headline">Project architecture</h3>
-        <Link href={`/architecture?scan=${scanId}`} className="btn btn-secondary btn-sm">
+        <Link href={`/architecture?scan=${scanId}`} className="btn btn-primary architecture-cta">
           View full architecture
+          <Icon name="arrow" aria-hidden="true" />
         </Link>
       </div>
 
@@ -207,18 +213,13 @@ function IssuesContent() {
 
   if (expired) {
     return (
-      <div className="empty-page">
-        <p>This scan has expired or could not be found. Scans are kept for 30 minutes.</p>
-        <button onClick={() => router.push("/")} className="btn btn-secondary">
-          Start a new scan
-        </button>
-      </div>
+      <ExpiredScan />
     );
   }
 
   if (!result) {
     return (
-      <div className="empty-page">Loading…</div>
+      <LoadingState />
     );
   }
 
@@ -259,14 +260,17 @@ function IssuesContent() {
       </header>
 
       {result.warnings.length > 0 && (
-        <div className="notice">
-          <p className="notice-title">Notices</p>
+        <aside className="scan-notes" aria-labelledby="scan-notes-title">
+          <h3 id="scan-notes-title" className="scan-notes-title">
+            <span className="scan-notes-icon"><Icon name="info" aria-hidden="true" /></span>
+            About this scan
+          </h3>
           <ul>
             {result.warnings.map((w, i) => (
               <li key={i}>{linkify(w)}</li>
             ))}
           </ul>
-        </div>
+        </aside>
       )}
 
       <DerivedArchitecture scanId={result.scan_id} />
@@ -311,7 +315,7 @@ export default function IssuesPage() {
   return (
     <Suspense
       fallback={
-        <div className="empty-page">Loading…</div>
+        <LoadingState />
       }
     >
       <IssuesContent />

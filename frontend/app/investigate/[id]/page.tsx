@@ -20,11 +20,14 @@ import {
   postRepro,
 } from "../../../lib/api";
 import { useRunStream } from "../../../lib/useRunStream";
+import AutoOpenDetails from "../../components/AutoOpenDetails";
 import Badge from "../../components/Badge";
 import Icon from "../../components/Icon";
 import CandidatePanel from "../../components/CandidatePanel";
 import LogView from "../../components/LogView";
 import ReproPanel from "../../components/ReproPanel";
+import { ExpiredScan, LoadingState } from "../../components/EmptyState";
+import MoreText from "../../components/MoreText";
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -117,6 +120,40 @@ function reducer(state: State, action: Action): State {
   }
 }
 
+// ── Step tracker ─────────────────────────────────────────────────────────────
+
+interface Step {
+  label: string;
+  state: "idle" | "running" | "done" | "failed";
+}
+
+/** Reproduce → fixes → recommendation, each showing where it is. Status, always visible. */
+function RunSteps({ steps }: { steps: Step[] }) {
+  return (
+    <ol className="run-steps" aria-label="Progress">
+      {steps.map((s) => (
+        <li key={s.label} className={`run-step is-${s.state}`}>
+          <span className="run-step-dot" aria-hidden="true">
+            {s.state === "running" ? (
+              <span className="holo-spinner" />
+            ) : s.state === "done" ? (
+              <Icon name="check" />
+            ) : s.state === "failed" ? (
+              <Icon name="close" />
+            ) : null}
+          </span>
+          <span>
+            {s.label}
+            <span className="sr-only">
+              {s.state === "idle" ? ", not started" : s.state === "running" ? ", running" : s.state === "done" ? ", done" : ", did not complete"}
+            </span>
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 const PRIORITY_TONE = { High: "red", Medium: "amber", Low: "green" } as const;
@@ -144,6 +181,8 @@ function Investigate() {
   const [startError, setStartError] = useState<string | null>(null);
   const chainDebug = useRef(false);
   const autoStarted = useRef(false);
+  // Stable, so the memoized candidate panels skip renders for other panels' log lines.
+  const hide = useCallback((candidateId: string) => dispatch({ type: "hide", candidateId }), []);
 
   useEffect(() => setScan(loadScan(scanId)), [scanId]);
 
@@ -178,6 +217,12 @@ function Investigate() {
   );
 
   // ── Streams ──
+  // A demo run that comes back instantly is played back step by step over a
+  // few seconds. Real work (the sandbox running, Granite or Bob) is never
+  // delayed: useRunStream only paces a run that arrives in one burst with no
+  // model output. General repos are never paced.
+  const demo = scan?.repo_source === "demo";
+  const paceMs = demo ? 400 : 0;
   const attemptId = state.repro.attempt?.attempt_id ?? null;
   const reproOpen = useMemo(() => (attemptId ? () => openReproStream(attemptId) : null), [attemptId]);
   useRunStream<ReproAttempt>(reproOpen, {
@@ -191,7 +236,7 @@ function Investigate() {
       }
     },
     onError: (message) => dispatch({ type: "repro/error", message }),
-  });
+  }, paceMs, demo ? 3500 : 0);
 
   const sessionId = state.debug.session?.session_id ?? null;
   const debugOpen = useMemo(() => (sessionId ? () => openDebugStream(sessionId) : null), [sessionId]);
@@ -200,7 +245,7 @@ function Investigate() {
     onLog: (event) => dispatch({ type: "debug/log", event }),
     onDone: (done) => dispatch({ type: "debug/done", done }),
     onError: (message) => dispatch({ type: "debug/error", message }),
-  });
+  }, paceMs, demo ? 4500 : 0);
 
   const reproRunning = state.repro.attempt?.status === "running" && !state.repro.error;
   const debugRunning = !!state.debug.session && !state.debug.done && !state.debug.error;
@@ -228,16 +273,11 @@ function Investigate() {
   }, [issue, autoAction, run]);
 
   if (scan === undefined) {
-    return <div className="empty-page">Loading…</div>;
+    return <LoadingState />;
   }
   if (!scan || !issue) {
     return (
-      <div className="empty-page">
-        <p>This issue is no longer available. Scans are kept for 30 minutes.</p>
-        <Link href="/" className="btn btn-secondary">
-          Start a new scan
-        </Link>
-      </div>
+      <ExpiredScan what="issue" />
     );
   }
 
@@ -248,6 +288,29 @@ function Investigate() {
   // A general repo can still run: when the server allows it, reproduce upgrades
   // to a sandboxed result and the race tests real patches.
   const executed = state.repro.attempt?.mode === "sandboxed" || session?.mode === "sandboxed";
+
+  // Where the run is, for the step tracker in the action card.
+  const attempt = state.repro.attempt;
+  const steps: Step[] = [
+    {
+      label: "Reproduce",
+      state: !attempt
+        ? "idle"
+        : state.repro.error || attempt.status === "error"
+          ? "failed"
+          : attempt.status === "running"
+            ? "running"
+            : "done",
+    },
+    {
+      label: (session?.mode ?? mode) === "sandboxed" ? "Race fixes" : "Propose fixes",
+      state: !session ? "idle" : state.debug.error ? "failed" : state.debug.done ? "done" : "running",
+    },
+    {
+      label: "Recommend",
+      state: !state.debug.done ? "idle" : state.debug.recommendation ? "done" : "failed",
+    },
+  ];
 
   return (
     <div className="page">
@@ -262,12 +325,16 @@ function Investigate() {
           </Badge>
         </div>
         <h2 className="title-1">{issue.title}</h2>
-        <p className="page-lede">{issue.description}</p>
+        <MoreText text={issue.description} className="page-lede" />
         {issue.file && (
-          <p className="code-ref">
-            {issue.file}
-            {issue.line ? `:${issue.line}` : ""}
-            {issue.function ? `, ${issue.function}()` : ""}
+          <p className="location-chip">
+            <Icon name="code" aria-hidden="true" />
+            {/* Break opportunities after each "/" so a long path wraps between folders, not mid-name. */}
+            <span>
+              {issue.file.replace(/\//g, "/\u200b")}
+              {issue.line ? `:${issue.line}` : ""}
+              {issue.function ? `, ${issue.function}()` : ""}
+            </span>
           </p>
         )}
       </header>
@@ -275,38 +342,59 @@ function Investigate() {
       {mode === "reasoning" && !executed && (
         <div className="notice">
           <p>
-            <strong>Analysis only.</strong> Unless a run below says it ran in the sandbox, this repository&apos;s
-            code is read as text: results are model reasoning, not reproductions, and patches are not verified.
+            <strong>Analysis only.</strong> Unless a run below says it ran in the sandbox, the code is read as
+            text: results are model reasoning, not reproductions, and patches are unverified.
           </p>
         </div>
       )}
 
-      <section className="run-bar" aria-label="Run">
-        <div className="actions">
-          <button onClick={() => run("both")} disabled={running} className="btn btn-primary">
-            Reproduce and Debug
-          </button>
-          <button onClick={() => run("repro")} disabled={running} className="btn btn-secondary">
-            Reproduce
-          </button>
-          <button onClick={() => run("debug")} disabled={running} className="btn btn-secondary">
-            Debug
-          </button>
+      <section className="card run-card" aria-labelledby="run-heading">
+        <div className="run-card-head">
+          <div className="run-card-intro">
+            <h3 id="run-heading" className="headline">Investigate this issue</h3>
+            <p>
+              {mode === "sandboxed"
+                ? "Reproduce the bug in a sandbox, then race candidate fixes through the tests."
+                : "Diagnose the bug from the code as text, then propose candidate patches. Nothing is executed."}
+            </p>
+          </div>
+          <RunSteps steps={steps} />
         </div>
-        {mode === "sandboxed" ? (
-          <label className="run-option">
-            Candidates
-            <select value={candidates} onChange={(e) => setCandidates(Number(e.target.value))} disabled={running}>
-              {[2, 3, 4, 5, 6].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <span className="run-option">2 candidate patches for general repositories</span>
-        )}
+        <div className="run-card-actions">
+          <div className="actions">
+            <button onClick={() => run("both")} disabled={running} className="btn btn-primary btn-lg">
+              {running ? <span className="holo-spinner" aria-hidden="true" /> : <Icon name="play" aria-hidden="true" />}
+              {running ? "Running…" : "Reproduce and Debug"}
+            </button>
+            <button onClick={() => run("repro")} disabled={running} className="btn btn-secondary btn-lg">
+              Reproduce only
+            </button>
+            <button onClick={() => run("debug")} disabled={running} className="btn btn-secondary btn-lg">
+              Debug only
+            </button>
+          </div>
+          {mode === "sandboxed" ? (
+            <div className="run-option">
+              <span id="candidates-label">Candidate fixes</span>
+              <div className="segmented" role="radiogroup" aria-labelledby="candidates-label">
+                {[2, 3, 4, 5, 6].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    role="radio"
+                    aria-checked={candidates === n}
+                    disabled={running}
+                    onClick={() => setCandidates(n)}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <span className="run-option">2 candidate patches</span>
+          )}
+        </div>
       </section>
 
       {startError && (
@@ -320,26 +408,76 @@ function Investigate() {
       )}
 
       {session && (
-        <section className="section" aria-labelledby="debug-heading">
-          <div className="section-head">
-            <h3 id="debug-heading" className="headline">{session.mode === "sandboxed" ? "Debug race" : "Proposed fixes"}</h3>
-            <div className="badges">
-              <Badge tone={debugRunning ? "blue" : "gray"}>{debugRunning ? "Running…" : "Finished"}</Badge>
-              {session.mode === "sandboxed" && reproduced && <Badge tone="green">Bug gate open</Badge>}
-              {state.hidden.length > 0 && (
-                <button onClick={() => dispatch({ type: "show-all" })} className="text-link">
-                  Show {state.hidden.length} hidden
-                </button>
+        <section className="card step-card" aria-labelledby="debug-heading">
+          <header className="step-head">
+            <span className="tile purple"><Icon name="bolt" /></span>
+            <div className="step-head-text">
+              <div className="step-title-row">
+                <h3 id="debug-heading" className="headline">{session.mode === "sandboxed" ? "Debug race" : "Proposed fixes"}</h3>
+                <Badge tone={debugRunning ? "blue" : state.debug.error ? "red" : "gray"}>
+                  {debugRunning ? "Running…" : state.debug.error ? "Error" : "Finished"}
+                </Badge>
+              </div>
+              <p className="step-meta">
+                {[
+                  `${session.candidates.length} candidates`,
+                  session.mode === "sandboxed" ? "each patch runs the tests in its own sandbox" : "patches are not applied or tested",
+                  session.mode === "sandboxed" && reproduced ? "bug gate open" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
+            {state.hidden.length > 0 && (
+              <button onClick={() => dispatch({ type: "show-all" })} className="btn btn-secondary btn-sm step-head-action">
+                Show {state.hidden.length} hidden
+              </button>
+            )}
+          </header>
+
+          {state.debug.done && (
+            <div className={`recommendation ${state.debug.recommendation?.verified ? "is-verified" : ""}`}>
+              {state.debug.recommendation ? (
+                <>
+                  <span className="recommendation-icon" aria-hidden="true">
+                    <Icon name={state.debug.recommendation.verified ? "check" : "spark"} />
+                  </span>
+                  <div className="recommendation-text">
+                    <p className="recommendation-title">
+                      Use {state.debug.recommendation.candidate_id}
+                      <span className="recommendation-status">
+                        {state.debug.recommendation.verified ? "Verified in sandbox" : "Not verified"}
+                      </span>
+                    </p>
+                    <p className="panel-text">{state.debug.recommendation.reason}</p>
+                    {session.mode === "sandboxed" && (
+                      <p className="field-hint">Other passing candidates can be downloaded from their cards.</p>
+                    )}
+                  </div>
+                  <a href={`#candidate-${state.debug.recommendation.candidate_id}`} className="btn btn-secondary btn-sm">
+                    View {state.debug.recommendation.candidate_id}
+                    <Icon name="arrow" aria-hidden="true" />
+                  </a>
+                </>
+              ) : (
+                <p className="panel-text">No candidate is recommended for this run.</p>
               )}
             </div>
-          </div>
+          )}
 
-          <LogView events={state.debug.log} maxHeight="max-h-40" emptyText="Starting…" />
           {state.debug.error && (
             <p role="alert" className="alert">
               {state.debug.error}
             </p>
           )}
+
+          <AutoOpenDetails openWhen={debugRunning}>
+            <summary>
+              <Icon name="chevron" />
+              Session log{state.debug.log.length > 0 && <span className="disclosure-count">{state.debug.log.length}</span>}
+            </summary>
+            <LogView events={state.debug.log} maxHeight="max-h-40" emptyText="Starting…" busy={debugRunning} />
+          </AutoOpenDetails>
 
           <div className="candidate-grid">
             {visible.map((c) => (
@@ -361,31 +499,10 @@ function Investigate() {
                     : null
                 }
                 canHide={visible.length > 2}
-                onHide={() => dispatch({ type: "hide", candidateId: c.candidate_id })}
+                onHide={hide}
               />
             ))}
           </div>
-
-          {state.debug.done && (
-            <div className={`card recommendation ${state.debug.recommendation?.verified ? "is-verified" : ""}`}>
-              {state.debug.recommendation ? (
-                <>
-                  <p className="headline">
-                    Recommendation: {state.debug.recommendation.candidate_id}
-                    <span className="recommendation-status">
-                      {state.debug.recommendation.verified ? "Verified in sandbox" : "Not verified"}
-                    </span>
-                  </p>
-                  <p className="issue-description">{state.debug.recommendation.reason}</p>
-                  {session.mode === "sandboxed" && (
-                    <p className="field-hint">You can download any other passing candidate from its panel.</p>
-                  )}
-                </>
-              ) : (
-                <p>No candidate is recommended for this run.</p>
-              )}
-            </div>
-          )}
         </section>
       )}
     </div>
@@ -394,7 +511,7 @@ function Investigate() {
 
 export default function InvestigatePage() {
   return (
-    <Suspense fallback={<div className="empty-page">Loading…</div>}>
+    <Suspense fallback={<LoadingState />}>
       <Investigate />
     </Suspense>
   );

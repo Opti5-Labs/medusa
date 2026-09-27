@@ -98,8 +98,8 @@ export default function ScanUploadPage() {
         <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
         <h2 className="title-1">Upload a zip</h2>
         <p className="page-lede">
-          Upload a zip of your codebase, up to {MAX_ZIP_MB} MB and 2,000 files. The code is read as text and
-          never executed, so results are analysis, not test runs.
+          Up to {MAX_ZIP_MB} MB and 2,000 files. Code is read as text, never run, so results are analysis,
+          not test runs.
         </p>
       </header>
 
@@ -136,11 +136,11 @@ export default function ScanUploadPage() {
             {file ? (
               <>
                 <span className="dropzone-title">{file.name}</span>
-                <span className="dropzone-hint">{(file.size / (1024 * 1024)).toFixed(2)} MB · Click to choose a different file</span>
+                <span className="dropzone-hint">{(file.size / (1024 * 1024)).toFixed(2)} MB · <span className="copy-long">Click to choose a different file</span><span className="copy-short">Tap to change</span></span>
               </>
             ) : (
               <>
-                <span className="dropzone-title">Drop a .zip here, or click to choose</span>
+                <span className="dropzone-title"><span className="copy-long">Drop a .zip here, or click to choose</span><span className="copy-short">Tap to choose a .zip</span></span>
                 <span className="dropzone-hint">Up to {MAX_ZIP_MB} MB</span>
               </>
             )}
