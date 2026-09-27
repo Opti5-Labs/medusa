@@ -1568,6 +1568,39 @@
   .diff-del .diff-gutter {
     background: color-mix(in srgb, #0b111d 88%, rgb(255 95 118));
   }
+  /* Syntax highlighting (lib/highlight.ts). Added/removed rows keep their tint and
+     +/− sign; the code itself takes token colours, like an editor's diff view. */
+  .diff-add > code, .diff-del > code {
+    color: var(--label);
+  }
+  .tok-comment, .tok-prolog, .tok-doctype, .tok-cdata {
+    color: #8591ab;
+    font-style: italic;
+  }
+  .tok-keyword, .tok-atrule, .tok-important, .tok-selector {
+    color: #b58cff;
+  }
+  .tok-string, .tok-char, .tok-attr-value, .tok-regex, .tok-template-string, .tok-triple-quoted-string {
+    color: #9ad9b3;
+  }
+  .tok-number, .tok-boolean, .tok-constant, .tok-symbol {
+    color: #f2b97f;
+  }
+  .tok-function, .tok-method {
+    color: #8db7ff;
+  }
+  .tok-class-name, .tok-builtin, .tok-tag, .tok-namespace {
+    color: #7ed8e8;
+  }
+  .tok-decorator, .tok-annotation {
+    color: #f3a7c9;
+  }
+  .tok-property, .tok-attr-name, .tok-parameter {
+    color: #bcc7e2;
+  }
+  .tok-operator, .tok-punctuation {
+    color: var(--label-2);
+  }
   .diff-file {
     padding: 6px var(--sp-3);
     border-block: 1px solid var(--separator);

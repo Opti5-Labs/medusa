@@ -1,12 +1,40 @@
 "use client";
 
 import { memo, useMemo, type CSSProperties } from "react";
+import { highlightLines, languageForPath, type Tok } from "../../lib/highlight";
 import Snippet from "./Snippet";
+import Tokens from "./Tokens";
 
-type Row =
-  | { kind: "file"; path: string }
-  | { kind: "hunk"; text: string }
-  | { kind: "add" | "del" | "ctx"; oldNo: number | null; newNo: number | null; text: string };
+type CodeRow = { kind: "add" | "del" | "ctx"; oldNo: number | null; newNo: number | null; text: string; toks?: Tok[] };
+type Row = { kind: "file"; path: string } | { kind: "hunk"; text: string } | CodeRow;
+
+/**
+ * Highlight each hunk as two whole blocks, the old side (context + removed)
+ * and the new side (context + added), so multi-line strings and comments are
+ * coloured correctly, then give each row its line's tokens.
+ */
+function highlightHunks(rows: Row[]): void {
+  let language: string | null = null;
+  let hunk: CodeRow[] = [];
+  const flush = () => {
+    for (const side of ["old", "new"] as const) {
+      const lines = hunk.filter((r) => r.kind === "ctx" || r.kind === (side === "old" ? "del" : "add"));
+      const toks = highlightLines(lines.map((r) => r.text).join("\n"), language);
+      lines.forEach((r, i) => {
+        if (r.kind !== "ctx" || side === "new") r.toks = toks[i];
+      });
+    }
+    hunk = [];
+  };
+  for (const row of rows) {
+    if (row.kind === "file") {
+      flush();
+      language = languageForPath(row.path);
+    } else if (row.kind === "hunk") flush();
+    else hunk.push(row);
+  }
+  flush();
+}
 
 const HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
@@ -38,6 +66,7 @@ function parse(patch: string): { rows: Row[]; added: number; removed: number } {
       rows.push({ kind: "ctx", oldNo: oldNo++, newNo: newNo++, text: line.slice(1) });
     }
   }
+  highlightHunks(rows);
   return { rows, added, removed };
 }
 
@@ -78,7 +107,7 @@ export default memo(function DiffView({ patch }: { patch: string }) {
                 <span>{r.newNo ?? ""}</span>
                 <span className="diff-sign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : ""}</span>
               </span>
-              <code>{r.text || " "}</code>
+              <code>{r.toks ? <Tokens line={r.toks} /> : r.text || " "}</code>
             </div>
           );
         })}

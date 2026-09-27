@@ -258,3 +258,14 @@
 @media (prefers-reduced-motion: reduce) {
   .light .ask-thinking { background: none; }
 }
+
+/* Syntax highlighting tokens (see globals.css). */
+.light .tok-comment, .light .tok-prolog, .light .tok-doctype, .light .tok-cdata { color: #6a748b; }
+.light .tok-keyword, .light .tok-atrule, .light .tok-important, .light .tok-selector { color: #7b3fb3; }
+.light .tok-string, .light .tok-char, .light .tok-attr-value, .light .tok-regex,
+.light .tok-template-string, .light .tok-triple-quoted-string { color: #1b7a4e; }
+.light .tok-number, .light .tok-boolean, .light .tok-constant, .light .tok-symbol { color: #9a5410; }
+.light .tok-function, .light .tok-method { color: #2d5dc0; }
+.light .tok-class-name, .light .tok-builtin, .light .tok-tag, .light .tok-namespace { color: #19788a; }
+.light .tok-decorator, .light .tok-annotation { color: #b0306b; }
+.light .tok-property, .light .tok-attr-name, .light .tok-parameter { color: #3f4a63; }

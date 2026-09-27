@@ -1,6 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { highlightLines, languageForTag } from "../../lib/highlight";
+import Tokens from "./Tokens";
 
 /**
  * Minimal, safe markdown for Ask answers. Everything is emitted as React text
@@ -53,7 +55,7 @@ function inline(text: string): ReactNode[] {
 }
 
 type Block =
-  | { kind: "code"; text: string }
+  | { kind: "code"; text: string; lang: string | null }
   | { kind: "heading"; text: string }
   | { kind: "ul"; items: Item[] }
   | { kind: "ol"; items: Item[]; start: number }
@@ -76,6 +78,7 @@ const isList = (b: Block | undefined): boolean => !!b && (b.kind === "ul" || b.k
 function parse(source: string): Block[] {
   const blocks: Block[] = [];
   let code: string[] | null = null;
+  let lang: string | null = null;
   let para: string[] = [];
 
   const flushPara = () => {
@@ -93,7 +96,7 @@ function parse(source: string): Block[] {
   for (const line of source.split("\n")) {
     if (code) {
       if (FENCE.test(line)) {
-        blocks.push({ kind: "code", text: code.join("\n") });
+        blocks.push({ kind: "code", text: code.join("\n"), lang });
         code = null;
       } else code.push(line);
       continue;
@@ -102,6 +105,7 @@ function parse(source: string): Block[] {
     if (FENCE.test(line)) {
       flushPara();
       code = [];
+      lang = languageForTag(line.trim().slice(3));
     } else if ((m = line.match(HEADING))) {
       flushPara();
       blocks.push({ kind: "heading", text: m[1] });
@@ -124,7 +128,7 @@ function parse(source: string): Block[] {
       para.push(line);
     }
   }
-  if (code) blocks.push({ kind: "code", text: code.join("\n") });
+  if (code) blocks.push({ kind: "code", text: code.join("\n"), lang });
   flushPara();
   return blocks.filter((b) => !(b.kind === "p" && b.text === ""));
 }
@@ -150,7 +154,14 @@ export default function AnswerText({ text }: { text: string }) {
           case "code":
             return (
               <pre key={i} className="answer-pre">
-                <code>{b.text}</code>
+                <code>
+                  {highlightLines(b.text, b.lang).map((line, n) => (
+                    <span key={n}>
+                      {n > 0 && "\n"}
+                      <Tokens line={line} />
+                    </span>
+                  ))}
+                </code>
               </pre>
             );
           case "heading":
