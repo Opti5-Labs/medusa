@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Icon from "../components/Icon";
-import { clearRecentScans, expiresAt, readRecentScans, type RecentScan } from "../../lib/recentScans";
+import { clearRecentScans, expiresAt, pruneScans, readRecentScans, type RecentScan } from "../../lib/recentScans";
 import EmptyState, { LoadingState } from "../components/EmptyState";
 
 const SOURCE = {
@@ -25,6 +25,8 @@ export default function RecentScansPage() {
     const refresh = () => {
       setScans(readRecentScans());
       setNow(Date.now());
+      // Drop scans the server lost (restart or expiry) so they aren't offered.
+      void pruneScans(readRecentScans().map((scan) => scan.id)).then(() => setScans(readRecentScans()));
     };
     refresh();
     const timer = window.setInterval(refresh, 30_000);
@@ -56,7 +58,7 @@ export default function RecentScansPage() {
           )}
         </div>
         <p className="page-lede">
-          Scans from this browser tab. Each is deleted, here and on the server, 30 minutes after it runs.
+          Scans from this browser tab. Each is deleted, here and on the server, 30 minutes after it runs, or sooner if the server restarts.
         </p>
       </header>
 

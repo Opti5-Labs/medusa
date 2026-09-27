@@ -33,8 +33,26 @@ export default function EmptyState({ icon, title, children, actions = [] }: Prop
   );
 }
 
-/** A scan or issue link that no longer resolves (scans live 30 minutes). */
-export function ExpiredScan({ what = "scan" }: { what?: "scan" | "issue" }) {
+/**
+ * A scan or issue link that no longer resolves: scans live 30 minutes, and
+ * only in the server's memory, so a restart loses them sooner.
+ */
+export function ExpiredScan({ what = "scan", reason }: { what?: "scan" | "issue"; reason?: "restarted" | "expired" }) {
+  if (reason === "restarted") {
+    return (
+      <EmptyState
+        icon="history"
+        title="The server restarted since this scan"
+        actions={[
+          { href: "/", label: "Start a new scan" },
+          { href: "/recent", label: "Recent scans" },
+        ]}
+      >
+        Medusa keeps scans and their results in memory only, and the server restarted after this scan ran, so its
+        results are gone. Run the scan again to pick up where you left off.
+      </EmptyState>
+    );
+  }
   return (
     <EmptyState
       icon="history"

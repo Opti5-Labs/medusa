@@ -12,6 +12,7 @@ import {
   getArchitectureDownloadUrl,
 } from "../../lib/api";
 import { useArchitecture } from "../../lib/useArchitecture";
+import { useScanGone } from "../../lib/useScanGone";
 import AssessingStatus from "../components/AssessingStatus";
 import Badge, { type Tone } from "../components/Badge";
 import Icon from "../components/Icon";
@@ -164,10 +165,11 @@ function ArchitectureContent() {
   }, [scanId]);
 
   const { report, log, error } = useArchitecture(scanId);
+  const gone = useScanGone(scanId);
 
-  if (!scanId || scan === null) {
+  if (!scanId || scan === null || gone) {
     return (
-      <ExpiredScan />
+      <ExpiredScan reason={gone ?? undefined} />
     );
   }
 
