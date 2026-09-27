@@ -40,7 +40,8 @@ _SYSTEM = (
     "bug is fixed. Import the project's modules the way its own tests do. Use only "
     "pytest and the standard library plus the project's own dependencies; no "
     "network, no files outside a tmp_path fixture, no sleeps. Keep it short: one or "
-    "two test functions named test_*. "
+    "two test functions named test_*. Everything you need is in this message: "
+    "answer directly, without opening or searching files. "
     'Reply with ONLY one JSON object: {"test_source": "<the complete test file>", '
     '"explanation": "<one sentence>"}'
 )
@@ -111,7 +112,9 @@ async def write_reproducer(
     else:
         granite_reason = "Granite is not configured on this server"
 
-    answer = await bob.ask(_SYSTEM + "\n\n" + user, files, ReproTest)
+    # The source is already in the prompt; an empty workspace keeps Bob from
+    # spending its turn limit re-reading the same files.
+    answer = await bob.ask(_SYSTEM + "\n\n" + user, {}, ReproTest)
     if answer.status == "ok" and isinstance(answer.data, ReproTest):
         if (problem := validate(answer.data.test_source)) is None:
             return Draft(answer.data.test_source, "bob")
