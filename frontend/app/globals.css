@@ -705,40 +705,6 @@
   .mermaid-view {
     position: relative;
   }
-  .diagram-toolbar {
-    position: absolute;
-    top: var(--sp-2);
-    right: var(--sp-2);
-    z-index: 2;
-    display: flex;
-    gap: 2px;
-    padding: 3px;
-    border: 1px solid var(--separator);
-    border-radius: 10px;
-    background: rgb(6 10 20 / 70%);
-    backdrop-filter: blur(6px);
-  }
-  .diagram-zoom-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    border: none;
-    border-radius: 7px;
-    background: transparent;
-    color: var(--label-2);
-    cursor: pointer;
-  }
-  .diagram-zoom-btn:hover {
-    background: rgb(255 255 255 / 8%);
-    color: var(--label-1);
-  }
-  .diagram-zoom-btn svg {
-    width: 16px;
-    height: 16px;
-  }
   .diagram-viewport {
     position: relative;
     height: 420px;
@@ -757,13 +723,73 @@
     top: 0;
     left: 0;
     transform-origin: 0 0;
-    will-change: transform;
+    /* No will-change here: promoting this to its own compositor layer makes
+       the browser resample a cached bitmap on every scale change instead of
+       re-rendering the vector content, which is what was making the diagram
+       look blurry when zoomed. */
   }
   .mermaid-view .diagram-stage svg {
     display: block;
     max-width: none;
     height: auto;
     margin: 0;
+  }
+  /* Bottom-right control cluster: a directional pad + recenter button, and a
+     separate zoom in/out pair — the same layout GitHub's own Mermaid viewer
+     uses. There is deliberately no scroll-wheel zoom: it fought with the
+     page's smooth-scrolling and zoomed and scrolled the page at once. */
+  .diagram-controls {
+    position: absolute;
+    right: var(--sp-2);
+    bottom: var(--sp-2);
+    z-index: 2;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .diagram-pad-panel,
+  .diagram-zoom-panel {
+    display: grid;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--separator);
+    border-radius: 10px;
+    background: rgb(6 10 20 / 70%);
+    backdrop-filter: blur(6px);
+  }
+  .diagram-pad-panel {
+    grid-template-columns: repeat(3, 26px);
+    grid-template-rows: repeat(3, 26px);
+  }
+  .diagram-zoom-panel {
+    grid-template-columns: 26px;
+    grid-template-rows: repeat(2, 26px);
+  }
+  .pad-up { grid-area: 1 / 2 / 2 / 3; }
+  .pad-left { grid-area: 2 / 1 / 3 / 2; }
+  .pad-center { grid-area: 2 / 2 / 3 / 3; }
+  .pad-right { grid-area: 2 / 3 / 3 / 4; }
+  .pad-down { grid-area: 3 / 2 / 4 / 3; }
+  .pad-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--label-2);
+    cursor: pointer;
+  }
+  .pad-btn:hover {
+    background: rgb(255 255 255 / 8%);
+    color: var(--label-1);
+  }
+  .pad-btn svg {
+    width: 15px;
+    height: 15px;
   }
   .provenance {
     display: grid;

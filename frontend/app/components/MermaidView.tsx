@@ -13,9 +13,10 @@ interface Props {
   fallback?: React.ReactNode;
 }
 
-const MIN_SCALE = 0.25;
+const MIN_SCALE = 0.15;
 const MAX_SCALE = 4;
-const ZOOM_STEP = 1.3;
+const ZOOM_STEP = 1.35;
+const PAN_STEP = 90;
 
 /**
  * Renders Mermaid source to an inline SVG, client-side only.
@@ -46,30 +47,36 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
   }, []);
 
-  const zoomAt = useCallback(
-    (clientX: number, clientY: number, factor: number) => {
+  const zoomAtCenter = useCallback(
+    (factor: number) => {
+      const vp = viewport.current;
+      if (!vp) return;
+      const cx = vp.clientWidth / 2;
+      const cy = vp.clientHeight / 2;
       const { scale, x, y } = view.current;
       const nextScale = Math.min(Math.max(scale * factor, MIN_SCALE), MAX_SCALE);
       const ratio = nextScale / scale;
       view.current = {
         scale: nextScale,
-        x: clientX - (clientX - x) * ratio,
-        y: clientY - (clientY - y) * ratio,
+        x: cx - (cx - x) * ratio,
+        y: cy - (cy - y) * ratio,
       };
       applyTransform();
     },
     [applyTransform]
   );
 
-  const zoomAtCenter = useCallback(
-    (factor: number) => {
-      const vp = viewport.current;
-      if (!vp) return;
-      zoomAt(vp.clientWidth / 2, vp.clientHeight / 2, factor);
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      view.current = { ...view.current, x: view.current.x + dx, y: view.current.y + dy };
+      applyTransform();
     },
-    [zoomAt]
+    [applyTransform]
   );
 
+  // Fits the diagram to the viewport's width (its full height pans into view
+  // with the directional pad or a drag), the same layout GitHub's own
+  // Mermaid viewer uses instead of shrinking everything to fit one box.
   const fitToView = useCallback(() => {
     const vp = viewport.current;
     const st = stage.current;
@@ -78,14 +85,9 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     st.style.transform = "translate(0px, 0px) scale(1)";
     const svgRect = svgEl.getBoundingClientRect();
     const vw = vp.clientWidth;
-    const vh = vp.clientHeight;
-    if (svgRect.width === 0 || svgRect.height === 0 || vw === 0 || vh === 0) return;
-    const scale = Math.min(Math.max(Math.min(vw / svgRect.width, vh / svgRect.height), MIN_SCALE), MAX_SCALE);
-    view.current = {
-      scale,
-      x: (vw - svgRect.width * scale) / 2,
-      y: (vh - svgRect.height * scale) / 2,
-    };
+    if (svgRect.width === 0 || vw === 0) return;
+    const scale = Math.min(Math.max(vw / svgRect.width, MIN_SCALE), MAX_SCALE);
+    view.current = { scale, x: (vw - svgRect.width * scale) / 2, y: 12 };
     applyTransform();
   }, [applyTransform]);
 
@@ -172,28 +174,16 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- themeTick intentionally forces a re-render
   }, [source, id, themeTick, ready]);
 
-  // Reset pan/zoom and fit the freshly rendered SVG into the viewport. Also
-  // binds a non-passive wheel listener: React's synthetic onWheel is passive
-  // by default, so preventDefault() there would not stop page scroll.
+  // Reset pan/zoom and fit the freshly rendered SVG into the viewport.
   useEffect(() => {
     if (!svg) return;
     view.current = { scale: 1, x: 0, y: 0 };
     const raf = requestAnimationFrame(fitToView);
-    const vp = viewport.current;
-    const onWheelNative = (e: WheelEvent) => {
-      e.preventDefault();
-      if (!vp) return;
-      const rect = vp.getBoundingClientRect();
-      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
-      zoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
-    };
-    vp?.addEventListener("wheel", onWheelNative, { passive: false });
-    return () => {
-      cancelAnimationFrame(raf);
-      vp?.removeEventListener("wheel", onWheelNative);
-    };
-  }, [svg, fitToView, zoomAt]);
+    return () => cancelAnimationFrame(raf);
+  }, [svg, fitToView]);
 
+  // Dragging is the only way to pan besides the directional pad — there is no
+  // scroll-wheel zoom, so hovering the diagram scrolls the page normally.
   function onPointerDown(e: React.PointerEvent) {
     if (e.button !== 0) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -240,17 +230,6 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
 
   return (
     <div ref={host} className={`mermaid-view ${className ?? ""}`}>
-      <div className="diagram-toolbar">
-        <button type="button" className="diagram-zoom-btn" onClick={() => zoomAtCenter(1 / ZOOM_STEP)} aria-label="Zoom out">
-          <Icon name="zoomOut" />
-        </button>
-        <button type="button" className="diagram-zoom-btn" onClick={fitToView} aria-label="Reset zoom to fit">
-          <Icon name="frame" />
-        </button>
-        <button type="button" className="diagram-zoom-btn" onClick={() => zoomAtCenter(ZOOM_STEP)} aria-label="Zoom in">
-          <Icon name="zoomIn" />
-        </button>
-      </div>
       <div
         ref={viewport}
         className="diagram-viewport"
@@ -258,7 +237,6 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onDoubleClick={fitToView}
       >
         <div
           ref={stage}
@@ -266,6 +244,33 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
           // eslint-disable-next-line @typescript-eslint/naming-convention -- React API
           dangerouslySetInnerHTML={{ __html: svg }}
         />
+      </div>
+      <div className="diagram-controls">
+        <div className="diagram-pad-panel">
+          <button type="button" className="pad-btn pad-up" onClick={() => panBy(0, PAN_STEP)} aria-label="Pan up">
+            <Icon name="chevron" style={{ transform: "rotate(-90deg)" }} />
+          </button>
+          <button type="button" className="pad-btn pad-left" onClick={() => panBy(PAN_STEP, 0)} aria-label="Pan left">
+            <Icon name="chevron" style={{ transform: "rotate(180deg)" }} />
+          </button>
+          <button type="button" className="pad-btn pad-center" onClick={fitToView} aria-label="Recenter diagram">
+            <Icon name="frame" />
+          </button>
+          <button type="button" className="pad-btn pad-right" onClick={() => panBy(-PAN_STEP, 0)} aria-label="Pan right">
+            <Icon name="chevron" />
+          </button>
+          <button type="button" className="pad-btn pad-down" onClick={() => panBy(0, -PAN_STEP)} aria-label="Pan down">
+            <Icon name="chevron" style={{ transform: "rotate(90deg)" }} />
+          </button>
+        </div>
+        <div className="diagram-zoom-panel">
+          <button type="button" className="pad-btn" onClick={() => zoomAtCenter(ZOOM_STEP)} aria-label="Zoom in">
+            <Icon name="zoomIn" />
+          </button>
+          <button type="button" className="pad-btn" onClick={() => zoomAtCenter(1 / ZOOM_STEP)} aria-label="Zoom out">
+            <Icon name="zoomOut" />
+          </button>
+        </div>
       </div>
     </div>
   );

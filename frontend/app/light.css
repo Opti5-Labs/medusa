@@ -127,7 +127,7 @@
 .light .code-snippet-head, .light .ask-sheet-head {
   background: rgb(226 231 244 / 55%);
 }
-.light .diagram-toolbar {
+.light .diagram-pad-panel, .light .diagram-zoom-panel {
   background: rgb(255 255 255 / 70%);
 }
 .light .segmented > button[aria-checked="true"] {
