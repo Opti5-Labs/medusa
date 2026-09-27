@@ -369,3 +369,33 @@ async def test_a_pytest_config_error_is_reported_not_zero_tests(tmp_path, monkey
         assert not run.ok and "pytest could not run the tests" in run.error
     finally:
         await pyexec.release(prep.env)
+
+
+@integration
+async def test_only_real_failures_count_as_reproductions(tmp_path, monkeypatch):
+    """A reproducer that crashes by itself is broken, not evidence of the bug."""
+    _allow(monkeypatch)
+    _write_repo(
+        tmp_path,
+        {
+            "lib.py": "def first(xs):\n    return xs[1]\n",  # the bug: wrong index
+            "tests/test_lib.py": "from lib import first\n\ndef test_ok():\n    assert first([1, 2]) == 2\n",
+        },
+    )
+    cases = {
+        # reads a file relative to __file__ that does not exist: crashes by itself
+        "from pathlib import Path\n\ndef test_x():\n"
+        "    assert 'x' in (Path(__file__).parent / 'docs' / 'a.txt').read_text()\n": "error",
+        # the project's own code raises: that is the bug showing
+        "from lib import first\n\ndef test_x():\n    assert first([7]) == 7\n": "failed",
+        # a plain assertion failure
+        "from lib import first\n\ndef test_x():\n    assert first([7, 8]) == 7\n": "failed",
+    }
+    prep = await pyexec.prepare(tmp_path, _noop)
+    assert prep.env is not None, prep.error
+    try:
+        for source, expected in cases.items():
+            run = await pyexec.run_tests(prep.env, _noop, repro_test=source)
+            assert run.repro_outcome == expected, source
+    finally:
+        await pyexec.release(prep.env)
