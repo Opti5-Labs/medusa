@@ -148,8 +148,10 @@ def _group(data: dict | None) -> Group:
 def parse_test_result(line: str) -> TestRun:
     data = json.loads(line[len(_RESULT_PREFIX) :])
     groups = data.get("groups") or {}
+    error = data.get("error")
     return TestRun(
-        ok=True,
+        ok=not error,
+        error=str(error)[:500] if error else None,
         patch_applied=data.get("patch_applied"),
         patch_error=data.get("patch_error"),
         reproducer=_group(groups.get("reproducer")),

@@ -313,3 +313,59 @@ async def test_output_floods_are_bounded(tmp_path, monkeypatch):
         assert max(len(line) for line in lines) <= 2000
     finally:
         await pyexec.release(prep.env)
+
+
+@integration
+async def test_real_world_project_layouts(tmp_path, monkeypatch):
+    """
+    Shapes that broke on real repos: a version taken from git (the archive has
+    no .git), a module the build generates, a `tests` extra rather than `test`,
+    and a pytest config passing a terminal option (--color).
+    """
+    _allow(monkeypatch)
+    _write_repo(
+        tmp_path,
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires = ["setuptools>=64", "setuptools-scm>=8"]\n'
+                'build-backend = "setuptools.build_meta"\n\n'
+                '[project]\nname = "vpkg"\ndynamic = ["version"]\n\n'
+                '[project.optional-dependencies]\ntests = ["iniconfig"]\n\n'
+                '[tool.setuptools_scm]\nversion_file = "src/vpkg/_version.py"\n\n'
+                '[tool.pytest.ini_options]\naddopts = "--color=yes"\n'
+            ),
+            "src/vpkg/__init__.py": "from ._version import version\n\ndef one():\n    return 1\n",
+            "tests/test_v.py": (
+                "import iniconfig\nfrom vpkg import one, version\n\n"
+                "def test_one():\n    assert one() == 1 and version\n"
+            ),
+        },
+    )
+    prep = await pyexec.prepare(tmp_path, _noop)
+    assert prep.env is not None, prep.error
+    try:
+        assert "project[tests]" in prep.env.installed, prep.env.install_errors
+        run = await pyexec.run_tests(prep.env, _noop)
+        assert run.ok, run.error
+        assert (run.suite.passed, run.suite.total) == (1, 1), run.collection_errors
+    finally:
+        await pyexec.release(prep.env)
+
+
+@integration
+async def test_a_pytest_config_error_is_reported_not_zero_tests(tmp_path, monkeypatch):
+    _allow(monkeypatch)
+    _write_repo(
+        tmp_path,
+        {
+            "pytest.ini": "[pytest]\naddopts = --no-such-option\n",
+            "tests/test_x.py": "def test_x():\n    assert True\n",
+        },
+    )
+    prep = await pyexec.prepare(tmp_path, _noop)
+    assert prep.env is not None, prep.error
+    try:
+        run = await pyexec.run_tests(prep.env, _noop)
+        assert not run.ok and "pytest could not run the tests" in run.error
+    finally:
+        await pyexec.release(prep.env)

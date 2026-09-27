@@ -19,6 +19,8 @@ Output: human-readable progress lines, then exactly one final line:
     MEDUSA_INSTALL {...}   or   MEDUSA_RESULT {...}
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -52,8 +54,32 @@ _REQUIREMENT_FILES = [
 ]
 
 
+_OUT = sys.stdout  # the container's stdout; pytest's own report is captured
+
+
+def _say(line: str) -> None:
+    _OUT.write(line + "\n")
+    _OUT.flush()
+
+
 def _emit(prefix: str, payload: dict) -> None:
-    print(prefix + " " + json.dumps(payload), flush=True)
+    _say(prefix + " " + json.dumps(payload))
+
+
+# Downloaded archives have no .git, so projects that take their version from
+# git (setuptools-scm, hatch-vcs) cannot build without being told one.
+_PIP_ENV = {**os.environ, "SETUPTOOLS_SCM_PRETEND_VERSION": "0.0.0"}
+
+
+def _pip_detail(output: str) -> str:
+    """The lines that say what went wrong, not pip's closing boilerplate."""
+    lines = [line.strip() for line in output.strip().splitlines() if line.strip()]
+    useful = [
+        line for line in lines
+        if ("error" in line.lower() or "exception" in line.lower() or "failed" in line.lower())
+        and not line.startswith(("note:", "hint:", "╰─>"))
+    ]
+    return "\n".join((useful or lines)[-4:])[-500:]
 
 
 def _pip(args: list[str], timeout: int) -> tuple[bool, str]:
@@ -61,13 +87,21 @@ def _pip(args: list[str], timeout: int) -> tuple[bool, str]:
            "--disable-pip-version-check", "--no-input", "--target", str(STAGING), *args]
     print("$ pip install " + " ".join(args), flush=True)
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False, env=_PIP_ENV
+        )
     except subprocess.TimeoutExpired:
         return False, "timed out"
-    tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
-    for line in tail:
+    output = proc.stdout + proc.stderr
+    ok = proc.returncode == 0
+    if ok and "does not provide the extra" in output:
+        ok = False  # pip only warns about a missing extra
+        shown = "no such extra"
+    else:
+        shown = _pip_detail(output) if not ok else "\n".join(output.strip().splitlines()[-2:])
+    for line in shown.splitlines():
         print("  " + line[:300], flush=True)
-    return proc.returncode == 0, "\n".join(tail)[-500:]
+    return ok, shown
 
 
 def install() -> int:
@@ -122,6 +156,30 @@ def install() -> int:
     return 0
 
 
+def _overlay_generated(repo: Path) -> None:
+    """
+    Copy files a build generates (e.g. a hatch-vcs `_version.py`, compiled
+    modules) from the installed copy of the project into the source tree, so
+    the source can be imported first. Files already in the source always win.
+    """
+    for installed in DEPS.iterdir():
+        if not (installed / "__init__.py").is_file():
+            continue
+        for base in (repo / "src", repo):
+            source = base / installed.name
+            if (source / "__init__.py").is_file():
+                break
+        else:
+            continue
+        for path in installed.rglob("*"):
+            if path.is_symlink() or not path.is_file() or "__pycache__" in path.parts:
+                continue
+            target = source / path.relative_to(installed)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+
+
 class _Collector:
     """Counts outcomes per group: the reproducer test vs the rest of the suite."""
 
@@ -137,7 +195,7 @@ class _Collector:
         if report.failed:
             self.collection_errors.append(report.nodeid or "collection")
             reason = str(report.longrepr).strip().splitlines()[-1:] if report.longrepr else []
-            print(f"COLLECT-ERROR {report.nodeid}: {' '.join(reason)[:300]}", flush=True)
+            _say(f"COLLECT-ERROR {report.nodeid}: {' '.join(reason)[:300]}")
 
     def pytest_runtest_logreport(self, report) -> None:
         if report.when != "call" and not (report.when == "setup" and report.failed):
@@ -163,7 +221,7 @@ class _Collector:
         if outcome != "passed" and report.longrepr is not None:
             crash = getattr(report.longrepr, "reprcrash", None)
             detail = f"\n      {str(crash)[:400]}" if crash else ""
-        print(f"{outcome.upper():6} [{group}] {report.nodeid}{detail}", flush=True)
+        _say(f"{outcome.upper():6} [{group}] {report.nodeid}{detail}")
 
 
 def test() -> int:
@@ -213,6 +271,7 @@ def test() -> int:
 
     # The repo's own (possibly patched) sources must win over the copy of the
     # project that the install phase put in /deps, or a fix would never be seen.
+    _overlay_generated(repo)
     import_path = [str(repo / "src"), str(repo), str(DEPS)]
     sys.path[:0] = import_path
     os.environ["PYTHONPATH"] = os.pathsep.join(import_path)
@@ -222,10 +281,20 @@ def test() -> int:
     import pytest  # from /deps when the repo pins its own, else the image's
 
     collector = _Collector()
-    args = ["-p", "no:cacheprovider", "-p", "no:terminal", "--continue-on-collection-errors",
+    # pytest's terminal plugin stays loaded (repo configs pass options such as
+    # --color that need it); its report is captured, and the collector prints
+    # the per-test lines Medusa reads.
+    args = ["-p", "no:cacheprovider", "-q", "--no-header", "--continue-on-collection-errors",
             "--timeout=60", "--rootdir", str(repo), *(targets or [])]
     print("Running tests" + (f": {' '.join(targets)}" if targets else " (whole suite)"), flush=True)
-    code = pytest.main(args, plugins=[collector])
+    report = io.StringIO()
+    with contextlib.redirect_stdout(report), contextlib.redirect_stderr(report):
+        code = pytest.main(args, plugins=[collector])
+    error = None
+    if int(code) in (2, 3, 4):  # interrupted, internal error, usage error
+        tail = [line for line in report.getvalue().strip().splitlines() if line.strip()][-4:]
+        error = f"pytest could not run the tests (exit code {int(code)}): " + " ".join(tail)[:400]
+        _say("ERROR  " + error)
     if repro_rel and collector.repro_outcome is None:
         # e.g. the repo's pytest config restricts collection to other paths
         collector.repro_outcome = "error"
@@ -238,6 +307,7 @@ def test() -> int:
             "groups": collector.groups,
             "repro_outcome": collector.repro_outcome,
             "collection_errors": collector.collection_errors[:20],
+            "error": error,
         },
     )
     return 0
