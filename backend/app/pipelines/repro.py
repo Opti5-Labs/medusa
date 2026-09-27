@@ -235,11 +235,8 @@ _REPRO_ATTEMPTS = 2
 
 
 def _repro_feedback(lines: list[str], run: pyexec.TestRun) -> str:
-    """What the model is told when its test did not reproduce the bug."""
-    if run.repro_outcome == "passed":
-        head = "The test PASSED on the current code, so it does not capture the bug."
-    else:
-        head = "The test did not run cleanly (an error, not a test failure)."
+    """What the model is told when its test crashed instead of running."""
+    head = "The test did not run cleanly (an error, not a test failure)."
     relevant = [
         line
         for line in lines
@@ -327,10 +324,21 @@ async def _try_live_reproduction(
                     f"The repository's own suite: {s.passed}/{s.total} passed.",
                 )
                 return
+            if result.repro_outcome == "passed":
+                # Evidence against the report. Asking for a test that fails
+                # anyway would only push the model to assert something wrong.
+                await ch.emit(
+                    "reproducer",
+                    "warn",
+                    "The test passed on the original code, so it found no bug: the "
+                    "issue may not exist as described.",
+                )
+                break
             previous, feedback = draft.source, _repro_feedback(lines, result)
-            outcome = "passed" if result.repro_outcome == "passed" else "errored"
             await ch.emit(
-                "reproducer", "warn", f"The test {outcome} instead of failing"
+                "reproducer",
+                "warn",
+                "The test errored instead of running; revising it with the output",
             )
         await ch.emit(
             "sandbox",

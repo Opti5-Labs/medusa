@@ -99,7 +99,7 @@ async def test_bob_writes_the_reproducer_when_granite_is_unavailable(monkeypatch
     from app.agents import bob
 
     async def fake_ask(prompt, files, schema, timeout_s=None, text_field=None):
-        assert "must FAIL on the current code" in prompt
+        assert "never weaken, invert or invent an expectation" in prompt
         return bob.BobAnswer(
             "ok",
             data=schema(test_source="def test_add():\n    assert add(2, 3) == 5\n"),
@@ -272,11 +272,13 @@ async def test_an_erroring_test_is_revised_with_the_sandbox_output(
 
 
 async def test_a_passing_test_never_claims_not_reproducible(client, sandbox, drafts):
-    sandbox["outcomes"] = ["passed", "passed"]
+    sandbox["outcomes"] = ["passed"]
     logs, done = await _repro(client, await _issue_in_uploaded_repo(client))
     assert (done["mode"], done["status"]) == ("reasoning", "plausible")
     assert done["reproducer_test"] is None
-    assert "PASSED on the current code" in drafts[1]["feedback"]
+    # never asked to "make it fail": that invites a test asserting something wrong
+    assert len(drafts) == 1
+    assert any("may not exist as described" in e["message"] for e in logs)
     assert any("stays an analysis (plausible)" in e["message"] for e in logs)
     assert sandbox["released"] == 1
 
