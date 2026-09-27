@@ -10,8 +10,10 @@ parallel sandboxes and recommends one based on test evidence.
 - **OptiLearn demo (verified):** a real bug in OptiLearn's Whisper fallback. The reproducer and
   every candidate fix run live in locked-down Docker containers; the recommendation is chosen
   deterministically from the results, and the fixed code can be downloaded.
-- **Any public GitHub repo or zip (analysis only):** the code is read as text, issues are listed
-  with file and line, one is diagnosed and patches are proposed. Nothing is executed, and the UI
+- **Any public GitHub repo or zip:** issues are listed with file and line, one is diagnosed and
+  patches are proposed. For Python projects with tests, a model-written reproducer test is run in a
+  gVisor sandbox; if it fails on the original code the bug counts as reproduced, and each patch is
+  verified against it and the repo's own suite. Everything else stays analysis only, and the UI
   says so.
 
 Two independent investigators, one judge:
