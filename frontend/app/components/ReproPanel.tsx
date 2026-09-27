@@ -145,7 +145,7 @@ export default memo(function ReproPanel({ mode, attempt, log, error }: Props) {
       {finished && attempt.reproducer_test && (
         <div className="stack">
           <p className="field-hint">This test failed on the original code in the sandbox.</p>
-          <CodeBlock code={attempt.reproducer_test} title="Reproducer test" />
+          <CodeBlock code={attempt.reproducer_test} title="Reproducer test" language="python" />
         </div>
       )}
 

@@ -1,11 +1,29 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useMemo, type CSSProperties } from "react";
+import { highlightLines, languageForPath } from "../../lib/highlight";
 import Snippet from "./Snippet";
+import Tokens from "./Tokens";
 
-/** Plain source shown as a code snippet: numbered lines, no wrapping, copy button. */
-export default function CodeBlock({ code, title, label }: { code: string; title: string; label?: string }) {
-  const lines = code.replace(/\n$/, "").split("\n");
+/**
+ * Source shown as a code snippet: numbered, syntax-highlighted lines, no
+ * wrapping, copy button. *language* is a Prism language; else guessed from the title.
+ */
+export default function CodeBlock({
+  code,
+  title,
+  label,
+  language,
+}: {
+  code: string;
+  title: string;
+  label?: string;
+  language?: string;
+}) {
+  const lines = useMemo(
+    () => highlightLines(code.replace(/\n$/, ""), language ?? languageForPath(title)),
+    [code, title, language],
+  );
   const digits = String(lines.length).length;
   return (
     <Snippet title={title} copyText={code} label={label ?? title} style={{ "--digits": `${digits}ch` } as CSSProperties}>
@@ -13,7 +31,9 @@ export default function CodeBlock({ code, title, label }: { code: string; title:
         {lines.map((line, i) => (
           <div key={i} className="diff-row diff-ctx">
             <span className="diff-gutter code-gutter" aria-hidden="true"><span>{i + 1}</span></span>
-            <code>{line || " "}</code>
+            <code>
+              <Tokens line={line} />
+            </code>
           </div>
         ))}
       </div>
