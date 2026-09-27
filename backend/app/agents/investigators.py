@@ -222,7 +222,10 @@ async def diagnose_general(
         "You are a senior engineer diagnosing a reported issue by reading code only; "
         "nothing can be executed. Explain the most likely root cause and cite the exact "
         "file and line numbers shown. Give the steps a developer would follow to "
-        "reproduce it. Be honest about uncertainty in confidence (0-1). Fields: "
+        "reproduce it. Be honest about uncertainty in confidence (0-1). Reports can be "
+        "wrong: if the code is actually correct, say so in root_cause and set a low "
+        "confidence. Give your final conclusion only, without step-by-step deliberation. "
+        "Fields: "
         "root_cause, citations (list of {file, line, explanation}), reproduction_steps "
         "(list), confidence. " + _JSON_ONLY,
         f"Issue:\n{_issue_text(issue)}\n\nSource code:\n{format_sources(files)}",

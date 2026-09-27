@@ -35,6 +35,7 @@ from app.demo import optilearn
 from app.models.contracts import DebugDone, DebugSession, FixAttempt, Issue
 from app.pipelines import verify
 from app.pipelines.context import select_files_for
+from app.pipelines.execution import execution_ineligible_reason
 from app.pipelines.repro import is_sandboxed, run_baseline, runtime_evidence
 from app.sandbox import pyexec
 from app.sandbox.runner import SandboxResult, run_checks, sandbox_unavailable_reason
@@ -512,9 +513,20 @@ async def _run_reasoning(
     store: RunStore, run: DebugRun, record: ScanRecord, issue: Issue
 ) -> None:
     ch = run.channel
-    await ch.emit(
-        "medusa", "info", "Analysis only: patches are proposed, never applied or run."
-    )
+    runnable = await _suite_runnable(record)
+    if runnable:
+        await ch.emit(
+            "medusa",
+            "info",
+            "The bug was not confirmed by a failing test, so patches are proposed and "
+            "then checked against the repository's own tests only.",
+        )
+    else:
+        await ch.emit(
+            "medusa",
+            "info",
+            "Analysis only: patches are proposed, never applied or run.",
+        )
     files = select_files_for(
         record.root, record.result.files_scanned, issue, record.scenarios.get(issue.id)
     )
@@ -523,12 +535,107 @@ async def _run_reasoning(
             "medusa", "error", "Could not find source files related to this issue."
         )
         return
-    await _propose(store, run, issue, files, tested=False)
-    run.recommendation = verify.recommend_unverified(run.session.candidates)
+    await _propose(store, run, issue, files, tested=runnable)
+    checked = runnable and await _check_against_suite(store, run, record, issue)
+    run.recommendation = verify.recommend_unverified(
+        run.session.candidates, suite_checked=checked
+    )
     if run.recommendation:
         await ch.emit("recommendation", "result", run.recommendation.reason)
+    elif checked and any(c.patch for c in run.session.candidates):
+        await ch.emit(
+            "recommendation",
+            "warn",
+            "No proposed patch kept the repository's existing tests passing, so none "
+            "is recommended.",
+        )
     else:
         await ch.emit("recommendation", "warn", "No patch could be proposed.")
+
+
+async def _suite_runnable(record: ScanRecord) -> bool:
+    """Whether this repo's own tests can run here (execution on, Python with tests)."""
+    if execution_ineligible_reason(record) is not None:
+        return False
+    return await asyncio.to_thread(pyexec.unavailable_reason) is None
+
+
+async def _check_against_suite(
+    store: RunStore, run: DebugRun, record: ScanRecord, issue: Issue
+) -> bool:
+    """
+    Apply each proposed patch in the sandbox and run the repository's own tests,
+    so a patch that breaks existing behaviour is never recommended. Nothing here
+    shows the bug is fixed: there is no failing test to fix. True if it ran.
+    """
+    ch = run.channel
+    proposed = [c for c in run.session.candidates if c.patch]
+    if not proposed:
+        return False
+
+    async def on_line(line: str) -> None:
+        await ch.emit("sandbox", "info", line)
+
+    prep = await pyexec.prepare(record.root, on_line)
+    if prep.env is None:
+        await ch.emit(
+            "sandbox", "warn", f"Could not run the repository's tests: {prep.error}"
+        )
+        return False
+    try:
+        repro = store.latest_repro_for(issue.id)
+        baseline = repro.exec_baseline if repro is not None else None
+        if baseline is None:
+            await ch.emit(
+                "sandbox", "info", "Running the repository's tests on the original code"
+            )
+            baseline = await pyexec.run_tests(prep.env, on_line)
+            if not baseline.ok:
+                await ch.emit(
+                    "sandbox",
+                    "warn",
+                    f"Could not run the repository's tests: {baseline.error}",
+                )
+                return False
+        await asyncio.gather(
+            *(_suite_check(run, c, prep.env, baseline) for c in proposed)
+        )
+    finally:
+        await pyexec.release(prep.env)
+    return True
+
+
+async def _suite_check(
+    run: DebugRun, candidate: FixAttempt, env: pyexec.ExecEnv, baseline
+) -> None:
+    ch, tag = run.channel, f"candidate:{candidate.candidate_id}"
+
+    async def on_line(line: str) -> None:
+        await ch.emit(tag, "info", line)
+
+    await ch.emit(tag, "info", "Checking the patch against the repository's own tests")
+    result = await pyexec.run_tests(env, on_line, patch=candidate.patch)
+    if not result.ok:
+        candidate.error = f"The test run failed: {result.error}"
+        await ch.emit(tag, "error", candidate.error)
+        return
+    if result.patch_applied is False:
+        candidate.error = f"Patch does not apply: {result.patch_error or 'rejected'}"
+        await ch.emit(tag, "error", candidate.error)
+        return
+    candidate.test_results = r = verify.evaluate_exec(baseline, result)
+    if r.regressions:
+        candidate.error = (
+            f"Breaks {len(r.regressions)} existing test(s): {', '.join(r.regressions)}"
+        )
+        await ch.emit(tag, "result", candidate.error)
+    else:
+        await ch.emit(
+            tag,
+            "result",
+            f"Existing tests unchanged ({r.passed}/{r.total} pass). The fix itself is "
+            "not verified: the bug was not confirmed.",
+        )
 
 
 # ── Tested (general Python repos, ARBITRARY_EXECUTION) ────────────────────────

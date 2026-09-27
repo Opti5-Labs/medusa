@@ -86,6 +86,9 @@ class ReproAttempt(BaseModel):
     # General repos run in the sandbox: the model-written test that reproduced
     # the bug (it failed on the original code), shown as evidence.
     reproducer_test: str | None = None
+    # A test of the correct behaviour passed on the original code: evidence the
+    # reported bug may not exist (general repos with execution on).
+    no_evidence: bool = False
 
 
 class TestResults(BaseModel):

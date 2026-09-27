@@ -88,7 +88,7 @@ class ReproRun:
     reproducer_test: str | None = (
         None  # general repos: the test that reproduced the bug
     )
-    exec_baseline: Any = None  # general repos: pyexec.TestRun on the original code
+    exec_baseline: Any = None  # general repos: pyexec.TestRun on the original code (suite baseline for debug)
     task: asyncio.Task | None = None
     created_at: float = field(default_factory=time.monotonic)
 

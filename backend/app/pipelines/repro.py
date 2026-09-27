@@ -324,7 +324,9 @@ async def _try_live_reproduction(
                     f"The repository's own suite: {s.passed}/{s.total} passed.",
                 )
                 return
+            run.exec_baseline = result  # the suite on the original code, for debug
             if result.repro_outcome == "passed":
+                attempt.no_evidence = True
                 # Evidence against the report. Asking for a test that fails
                 # anyway would only push the model to assert something wrong.
                 await ch.emit(

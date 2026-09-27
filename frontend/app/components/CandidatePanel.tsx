@@ -52,6 +52,14 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
   const r = c.test_results;
   const s = c.patch_stats;
   const running = c.sandbox_status === "running";
+  // Unconfirmed bug, but the patch ran against the repo's own tests: say what that
+  // showed without calling it a verified fix.
+  const status =
+    mode === "reasoning" && r
+      ? r.regressions.length
+        ? { label: "Breaks existing tests", tone: "red" as Tone }
+        : { label: "Existing tests pass", tone: "amber" as Tone }
+      : STATUS[c.sandbox_status];
   return (
     <article
       id={`candidate-${c.candidate_id}`}
@@ -61,7 +69,7 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
       <header className="candidate-head">
         <div className="candidate-title">
           <span className="candidate-id">{c.candidate_id}</span>
-          <Badge tone={STATUS[c.sandbox_status].tone}>{STATUS[c.sandbox_status].label}</Badge>
+          <Badge tone={status.tone}>{status.label}</Badge>
           {recommended && <Badge tone="green">Recommended</Badge>}
         </div>
         {canHide && (
@@ -88,12 +96,14 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
         <dl className="candidate-stats">
           {r && (
             <>
+              {mode === "sandboxed" && (
+                <div>
+                  <dt>Reproducer</dt>
+                  <dd className={r.reproducer_fixed ? "is-good" : "is-bad"}>{r.reproducer_fixed ? "Fixed" : "Still fails"}</dd>
+                </div>
+              )}
               <div>
-                <dt>Reproducer</dt>
-                <dd className={r.reproducer_fixed ? "is-good" : "is-bad"}>{r.reproducer_fixed ? "Fixed" : "Still fails"}</dd>
-              </div>
-              <div>
-                <dt>Checks</dt>
+                <dt>{mode === "sandboxed" ? "Checks" : "Existing tests"}</dt>
                 <dd className={r.passed === r.total ? "is-good" : ""}>{r.passed}/{r.total}</dd>
               </div>
               <div>
@@ -115,7 +125,7 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
 
       {c.error && !running && <p className="field-error">{c.error}</p>}
 
-      {mode === "sandboxed" && (
+      {(mode === "sandboxed" || r) && (
         <AutoOpenDetails openWhen={running || c.sandbox_status === "failed"}>
           <summary>
             <Icon name="chevron" />
@@ -129,7 +139,7 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
         <AutoOpenDetails openWhen={mode === "reasoning" || recommended}>
           <summary>
             <Icon name="chevron" />
-            {mode === "reasoning" ? "Proposed patch (not applied or tested)" : "Patch"}
+            {mode === "sandboxed" ? "Patch" : r ? "Proposed patch (checked against existing tests only)" : "Proposed patch (not applied or tested)"}
           </summary>
           <DiffView patch={c.patch} />
         </AutoOpenDetails>
@@ -155,7 +165,7 @@ export default memo(function CandidatePanel({ candidate: c, mode, log, recommend
               className="btn btn-secondary btn-sm"
             >
               <Icon name="upload" className="icon-download" aria-hidden="true" />
-              {mode === "sandboxed" ? ".patch" : ".patch (untested)"}
+              {mode === "sandboxed" ? ".patch" : r ? ".patch (fix not verified)" : ".patch (untested)"}
             </button>
           )}
         </div>

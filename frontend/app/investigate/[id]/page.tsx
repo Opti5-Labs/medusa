@@ -181,6 +181,7 @@ function Investigate() {
   const [busy, setBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const chainDebug = useRef(false);
+  const [debugHeld, setDebugHeld] = useState(false);
   const autoStarted = useRef(false);
   // Stable, so the memoized candidate panels skip renders for other panels' log lines.
   const hide = useCallback((candidateId: string) => dispatch({ type: "hide", candidateId }), []);
@@ -234,7 +235,10 @@ function Investigate() {
       dispatch({ type: "repro/done", attempt });
       if (chainDebug.current) {
         chainDebug.current = false;
-        if (attempt.status === "reproduced" || attempt.status === "plausible") void startDebug();
+        // A passing test of the correct behaviour is evidence against the report:
+        // ask before proposing fixes for a bug that may not exist.
+        if (attempt.no_evidence) setDebugHeld(true);
+        else if (attempt.status === "reproduced" || attempt.status === "plausible") void startDebug();
       }
     },
     onError: (message) => dispatch({ type: "repro/error", message }),
@@ -409,6 +413,28 @@ function Investigate() {
         <ReproPanel mode={state.repro.attempt.mode} attempt={state.repro.attempt} log={state.repro.log} error={state.repro.error} />
       )}
 
+      {debugHeld && !session && (
+        <div className="notice" role="status">
+          <p>
+            <strong>No evidence of this bug.</strong> A test of the correct behaviour passed on the original code, so the
+            issue may not exist as described. Fixes were not proposed.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={running}
+              onClick={() => {
+                setDebugHeld(false);
+                void startDebug();
+              }}
+            >
+              Propose fixes anyway
+            </button>
+          </div>
+        </div>
+      )}
+
       {session && (
         <section className="card step-card" aria-labelledby="debug-heading">
           <header className="step-head">
@@ -423,7 +449,11 @@ function Investigate() {
               <p className="step-meta">
                 {[
                   `${session.candidates.length} candidates`,
-                  session.mode === "sandboxed" ? "each patch runs the tests in its own sandbox" : "patches are not applied or tested",
+                  session.mode === "sandboxed"
+                    ? "each patch runs the tests in its own sandbox"
+                    : session.candidates.some((c) => c.test_results)
+                      ? "checked against existing tests only; fixes not verified"
+                      : "patches are not applied or tested",
                   session.mode === "sandboxed" && reproduced ? "bug gate open" : null,
                 ]
                   .filter(Boolean)

@@ -278,6 +278,7 @@ async def test_a_passing_test_never_claims_not_reproducible(client, sandbox, dra
     assert done["reproducer_test"] is None
     # never asked to "make it fail": that invites a test asserting something wrong
     assert len(drafts) == 1
+    assert done["no_evidence"] is True  # the UI asks before proposing fixes
     assert any("may not exist as described" in e["message"] for e in logs)
     assert any("stays an analysis (plausible)" in e["message"] for e in logs)
     assert sandbox["released"] == 1
@@ -339,7 +340,7 @@ def race(monkeypatch, sandbox, drafts):
     from app.pipelines import repro
 
     state = {"bob_patches": [_FIX], "prepares": 0}
-    runs = {
+    runs = state["runs"] = {
         None: ("failed", [], []),  # the reproduce run on the original code
         _FIX: ("passed", [], []),
         _BAD: ("passed", ["tests/test_calc.py::test_zero"], []),
@@ -363,7 +364,8 @@ def race(monkeypatch, sandbox, drafts):
         return pyexec.PrepareResult(pyexec.ExecEnv(volume="v", code_dir=code_dir))
 
     async def run_tests(env, on_line, *, patch=None, repro_test=None, select=None):
-        assert repro_test == _GOOD_TEST  # every patch faces the reproducer
+        # every raced patch faces the reproducer; a suite-only check has none
+        assert repro_test in (_GOOD_TEST, None)
         if runs[patch] is None:
             return pyexec.TestRun(
                 ok=True, patch_applied=False, patch_error="no such file"
@@ -391,9 +393,11 @@ def race(monkeypatch, sandbox, drafts):
     return state
 
 
-async def _debug(client, issue_id):
+async def _debug(client, issue_id, candidates=2):
     session = (
-        await client.post(f"/api/issues/{issue_id}/debug", json={"candidates": 2})
+        await client.post(
+            f"/api/issues/{issue_id}/debug", json={"candidates": candidates}
+        )
     ).json()
     logs, done = await _events(client, f"/api/debug/{session['session_id']}/events")
     return session, logs, done
@@ -441,7 +445,9 @@ async def test_failing_patches_are_never_recommended(client, race, patch, error)
     assert done["recommendation"] is None
 
 
-async def test_without_a_failing_reproducer_patches_stay_untested(client, race):
+async def test_without_a_reproduction_patches_are_suite_checked_not_verified(
+    client, race
+):
     issue_id = await _issue_in_uploaded_repo(client)
     session, _, done = await _debug(client, issue_id)  # no reproduce run first
     assert session["mode"] == "reasoning"
@@ -449,7 +455,7 @@ async def test_without_a_failing_reproducer_patches_stay_untested(client, race):
         c["sandbox_status"] == "not_applicable" for c in done["session"]["candidates"]
     )
     assert done["recommendation"]["verified"] is False
-    assert race["prepares"] == 0
+    assert race["prepares"] == 1  # one environment for the baseline and the check
 
 
 def test_a_test_module_that_stops_importing_is_a_regression():
@@ -468,3 +474,73 @@ def test_a_test_module_that_stops_importing_is_a_regression():
         "tests/test_io.py (no longer imports)"
     ]
     assert not verify.is_passing(r)
+
+
+async def test_unconfirmed_bug_patches_are_checked_against_the_suite(client, race):
+    race["runs"][None] = ("passed", [], [])  # the reproducer finds no bug
+    issue_id = await _issue_in_uploaded_repo(client)
+    _, repro_done = await _repro(client, issue_id)
+    assert repro_done["status"] == "plausible" and repro_done["no_evidence"]
+
+    session, logs, done = await _debug(client, issue_id)
+    assert session["mode"] == "reasoning"
+    c1 = done["session"]["candidates"][0]
+    assert c1["sandbox_status"] == "not_applicable"  # never called a tested fix
+    assert c1["test_results"]["regressions"] == []
+    rec = done["recommendation"]
+    assert rec["candidate_id"] == "c1" and rec["verified"] is False
+    assert "Not verified as a fix" in rec["reason"]
+    assert any(
+        "checked against the repository's own tests" in e["message"] for e in logs
+    )
+
+    patch = await client.get(
+        f"/api/debug/{session['session_id']}/patch?candidate_id=c1"
+    )
+    assert "NOT verified as a fix" in patch.text
+
+
+def test_a_patch_that_breaks_tests_loses_to_one_that_does_not():
+    from app.models.contracts import FixAttempt, PatchStats, TestResults
+    from app.pipelines import verify
+
+    def cand(cid, size, regressions):
+        return FixAttempt(
+            candidate_id=cid,
+            approach="x",
+            patch="p",
+            sandbox_status="not_applicable",
+            patch_stats=PatchStats(files_changed=1, lines_added=size, lines_removed=0),
+            test_results=TestResults(
+                passed=5,
+                failed=0,
+                total=5,
+                reproducer_fixed=False,
+                regressions=regressions,
+            ),
+        )
+
+    small_but_breaks = cand("c1", 1, ["t::a"])
+    larger_but_safe = cand("c2", 9, [])
+    rec = verify.recommend_unverified(
+        [small_but_breaks, larger_but_safe], suite_checked=True
+    )
+    assert rec.candidate_id == "c2" and not rec.verified
+    assert "1 other patch broke existing tests" in rec.reason
+    # without the suite check, the smallest proposal is still the fallback
+    assert (
+        verify.recommend_unverified([small_but_breaks, larger_but_safe]).candidate_id
+        == "c1"
+    )
+
+
+async def test_no_patch_is_recommended_when_all_break_tests(client, race):
+    race["runs"][None] = ("passed", [], [])
+    race["bob_patches"] = [_BAD]
+    issue_id = await _issue_in_uploaded_repo(client)
+    await _repro(client, issue_id)
+    _, logs, done = await _debug(client, issue_id)
+    assert done["recommendation"] is None
+    assert any(
+        "kept the repository's existing tests passing" in e["message"] for e in logs
+    )

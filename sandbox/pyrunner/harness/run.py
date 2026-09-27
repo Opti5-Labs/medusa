@@ -180,6 +180,9 @@ def _overlay_generated(repo: Path) -> None:
                 shutil.copy2(path, target)
 
 
+_SHOWN_SUITE_FAILURES = 20
+
+
 class _Collector:
     """Counts outcomes per group: the reproducer test vs the rest of the suite."""
 
@@ -190,6 +193,7 @@ class _Collector:
         }
         self.repro_outcome: str | None = None  # passed | failed | error
         self.collection_errors: list[str] = []
+        self.hidden_failures = 0
 
     def pytest_collectreport(self, report) -> None:
         if report.failed:
@@ -217,11 +221,27 @@ class _Collector:
             rank = {"failed": 3, "error": 2, "passed": 1}
             if rank[outcome] > rank.get(self.repro_outcome or "", 0):
                 self.repro_outcome = outcome
+        # Only what matters is printed: every reproducer result and the first
+        # suite failures. Passing suite tests are counted in the summary instead.
+        if group == "suite" and outcome == "passed":
+            return
+        if group == "suite" and len(g["failures"]) > _SHOWN_SUITE_FAILURES:
+            self.hidden_failures += 1
+            return
         detail = ""
         if outcome != "passed" and report.longrepr is not None:
             crash = getattr(report.longrepr, "reprcrash", None)
             detail = f"\n      {str(crash)[:400]}" if crash else ""
         _say(f"{outcome.upper():6} [{group}] {report.nodeid}{detail}")
+
+    def summary(self) -> str:
+        s = self.groups["suite"]
+        line = f"SUITE  {s['passed']}/{s['total']} of the repository's tests passed"
+        if s["failed"] or s["errors"]:
+            line += f" ({s['failed']} failed, {s['errors']} errors)"
+        if self.hidden_failures:
+            line += f"; {self.hidden_failures} more failing tests not listed"
+        return line
 
 
 def test() -> int:
@@ -290,6 +310,7 @@ def test() -> int:
     report = io.StringIO()
     with contextlib.redirect_stdout(report), contextlib.redirect_stderr(report):
         code = pytest.main(args, plugins=[collector])
+    _say(collector.summary())
     error = None
     if int(code) in (2, 3, 4):  # interrupted, internal error, usage error
         tail = [line for line in report.getvalue().strip().splitlines() if line.strip()][-4:]
