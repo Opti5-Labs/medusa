@@ -4,8 +4,8 @@
 > angles, reproduces the failure, tests competing patches in isolated sandboxes, and recommends a fix
 > based on execution evidence rather than model confidence.
 
-This document describes the target design. Hard rules, limits and contracts live in `CLAUDE.md`.
-If they disagree, `CLAUDE.md` wins.
+This document describes the target design. Hard rules, limits and contracts live in `AGENTS.md`.
+If they disagree, `AGENTS.md` wins.
 
 ## Core principle
 
@@ -114,7 +114,7 @@ result is `not_reproducible`, which is a valid outcome, not an error to hide.
 
 ### Debug race
 
-- Each candidate gets its own container with the limits in `CLAUDE.md` (no network, 512 MB,
+- Each candidate gets its own container with the limits in `AGENTS.md` (no network, 512 MB,
   0.5 CPU, read-only root, no credentials, 90 s wall clock, always removed).
 - Candidates run concurrently under the global `MAX_CONCURRENT_SANDBOXES` semaphore.
 - A candidate whose patch doesn't apply or whose run fails shows `failed` in its own panel.

@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Context for AI coding agents working in this repo. Read this before changing anything.
 
@@ -48,7 +48,7 @@ Nothing persists between sessions. Run state lives in an in-memory store plus a 
 
 ```
 .
-├── CLAUDE.md
+├── AGENTS.md
 ├── README.md
 ├── .env.example
 ├── bob_sessions/                  # Bob IDE task summary screenshots (PNG). Do not touch.
