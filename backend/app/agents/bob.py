@@ -224,6 +224,24 @@ class BobAnswer:
     cost: float | None = None
 
 
+def _through_unescaped_quotes(tail: str) -> str | None:
+    """
+    A string value whose unescaped quotes (common in code) ended it early: read
+    up to the quote that really closes it, the last one before another key, or
+    else before the closing brace, and decode its escapes.
+    """
+    match = re.match(r'(.*)"\s*,\s*"\w+"\s*:', tail, re.DOTALL) or re.match(
+        r'(.*)"\s*}', tail, re.DOTALL
+    )
+    if match is None or not match.group(1).strip():
+        return None
+    raw = re.sub(r'(?<!\\)"', r"\"", match.group(1))
+    try:
+        return json.loads(f'"{raw}"', strict=False)
+    except ValueError:
+        return match.group(1)
+
+
 def _salvage_text(message: str, field: str) -> str | None:
     """
     Recover a free-text answer when Bob's JSON wrapper is damaged: the string
@@ -231,10 +249,16 @@ def _salvage_text(message: str, field: str) -> str | None:
     in plain text instead of JSON. None if nothing usable is there.
     """
     if match := re.search(rf'"{re.escape(field)}"\s*:\s*"', message):
+        start = match.end()
         try:
-            value, _ = json.decoder.scanstring(message, match.end(), False)
+            value, end = json.decoder.scanstring(message, start, False)
         except ValueError:
-            value = ""
+            value, end = "", start
+        rest = message[end:].lstrip()
+        if value.strip() and (not rest or rest[0] in ",}"):
+            return value
+        if (greedy := _through_unescaped_quotes(message[start:])) is not None:
+            return greedy
         if value.strip():
             return value
     stripped = message.strip()

@@ -76,6 +76,12 @@ def test_validate_rejects_unusable_tests(source, problem):
     assert problem in reproducer.validate(source)
 
 
+def test_fenced_code_is_unwrapped():
+    text = "Here it is:\n```python\ndef test_bug():\n    assert f() == 1\n```\nDone."
+    assert reproducer.code_from(text) == "def test_bug():\n    assert f() == 1\n"
+    assert reproducer.code_from("def test_x(): pass\n") == "def test_x(): pass\n"
+
+
 def test_validate_accepts_a_test():
     assert reproducer.validate("def test_bug():\n    assert f() == 1\n") is None
 
