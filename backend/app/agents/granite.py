@@ -246,6 +246,11 @@ def _check_status(resp: httpx.Response) -> None:
                 "the watsonx.ai token quota for this project is used up; Granite is "
                 "unavailable until it resets or the plan is upgraded"
             )
+        if "no_associated_service_instance_error" in codes:
+            raise GraniteUnavailable(
+                "the watsonx.ai project has no watsonx.ai Runtime service associated; "
+                "associate one under the project's Manage > Services & integrations"
+            )
         raise GraniteUnavailable(
             "watsonx.ai refused the request (not authorised for this project). "
             "Check that the API key's user is a member of WATSONX_PROJECT_ID."

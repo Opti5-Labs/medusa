@@ -152,6 +152,15 @@ async def test_non_retryable_failures_keep_their_type(monkeypatch):
         await granite.chat_json("s", "u", _Answer)
 
 
+async def test_a_project_without_a_runtime_says_so(monkeypatch):
+    body = json.dumps(
+        {"errors": [{"code": "no_associated_service_instance_error", "message": "x"}]}
+    )
+    _install(monkeypatch, [(403, body)])
+    with pytest.raises(granite.GraniteUnavailable, match="no watsonx.ai Runtime"):
+        await granite.chat_json("s", "u", _Answer)
+
+
 def _sse(*pieces: str, done: bool = True) -> str:
     lines = [
         "data: " + json.dumps({"choices": [{"delta": {"content": p}}]}) for p in pieces
