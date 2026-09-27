@@ -13,8 +13,15 @@ interface Props {
   fallback?: React.ReactNode;
 }
 
-const MIN_SCALE = 0.15;
-const MAX_SCALE = 4;
+// Scale is relative to the diagram's true native pixel size (see the
+// setAttribute fix below), so 1 means "actual size" the way Mermaid drew it.
+// The diagram is plain vector SVG rendered with a CSS transform (no
+// rasterized layer — see the .diagram-stage comment), so it stays crisp at
+// any scale: MAX_SCALE just needs to comfortably exceed native size for a
+// Miro-style "zoom in as far as you want" feel, and MIN_SCALE just needs to
+// stay below the smallest realistic fit-to-width ratio for a huge diagram.
+const MIN_SCALE = 0.02;
+const MAX_SCALE = 16;
 const ZOOM_STEP = 1.35;
 const PAN_STEP = 90;
 
@@ -177,6 +184,20 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   // Reset pan/zoom and fit the freshly rendered SVG into the viewport.
   useEffect(() => {
     if (!svg) return;
+    // Mermaid renders with width="100%" (for useMaxWidth). With no ancestor
+    // giving .diagram-stage a real width, that percentage can't resolve, and
+    // the browser falls back to the ~300x150 default intrinsic size for a
+    // replaced element with no other sizing info — every zoom level was then
+    // just magnifying that already-tiny render, not the diagram itself,
+    // which is why it stayed blurry however far in you zoomed. Overwrite
+    // width/height with real pixel values from the SVG's own viewBox so it
+    // lays out — and then scales — at its true native size.
+    const svgEl = stage.current?.querySelector("svg");
+    const box = svgEl?.viewBox.baseVal;
+    if (svgEl && box && box.width && box.height) {
+      svgEl.setAttribute("width", String(box.width));
+      svgEl.setAttribute("height", String(box.height));
+    }
     view.current = { scale: 1, x: 0, y: 0 };
     const raf = requestAnimationFrame(fitToView);
     return () => cancelAnimationFrame(raf);
