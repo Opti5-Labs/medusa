@@ -101,8 +101,9 @@ export default function ScanGitHubPage() {
         <Link href="/" className="back-link"><Icon name="chevron" />Overview</Link>
         <h2 className="title-1">Link a GitHub repository</h2>
         <p className="page-lede">
-          Medusa reviews a public repository&apos;s code and open GitHub Issues. Code is read as text,
-          never run, so results are analysis, not test runs.
+          Medusa reviews a public repository&apos;s code and open GitHub Issues. Scanning reads the code as
+          text. When you reproduce an issue in a Python project with tests, its tests run in an isolated
+          sandbox; otherwise results are analysis, not test runs.
         </p>
       </header>
 
@@ -161,7 +162,7 @@ export default function ScanGitHubPage() {
           <AssessingStatus
             steps={SCAN_STEPS}
             stepMs={2200}
-            note="Code is read as text and never executed. This can take up to 90 seconds."
+            note="Scanning reads the code as text. This can take up to 90 seconds."
           />
         )}
 

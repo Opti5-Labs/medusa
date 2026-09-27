@@ -62,7 +62,7 @@ Everything runs on one AWS EC2 instance: nginx serves the frontend and proxies `
 
 ### Key design decisions
 
-- **One execution path.** Only the OptiLearn demo runs code. General repos are analysed, never executed. One sandbox to harden and rehearse, and no untrusted builds on a public URL.
+- **One execution path.** Originally only the OptiLearn demo ran code. Since 2026-09-27, Python repos with tests are also run under gVisor (`ARBITRARY_EXECUTION`), with a PyPI-only install network, no network for tests, and capped disk, RAM and CPU.
 - **Bob live on the deployed site** (changed from the original replay plan). Bob Shell runs headless on the server as an independent investigator, read-only and capped at `BOB_MAX_COST` (0.25 Bobcoins) and `BOB_MAX_TURNS` (6) per run, with a 6-hour answer cache and per-IP rate limits. `BOB_MODE=replay` can still stream a recorded session from `golden/optilearn/investigation.jsonl`, but only a real captured run may go there.
 - **Honest outputs.** Reasoning-only results are never presented as reproduced or tested. A clean "could not reproduce" is a valid result, not a failure to hide.
 - **Stateless by design.** No database, no accounts, no GitHub write access.

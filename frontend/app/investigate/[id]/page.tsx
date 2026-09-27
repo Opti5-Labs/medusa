@@ -355,7 +355,7 @@ function Investigate() {
             <p>
               {mode === "sandboxed"
                 ? "Reproduce the bug in a sandbox, then race candidate fixes through the tests."
-                : "Diagnose the bug from the code as text, then propose candidate patches. Nothing is executed."}
+                : "Diagnose the bug from the code. Python projects with tests are also run in an isolated sandbox: a failing test confirms the bug, and patches are verified against it."}
             </p>
           </div>
           <RunSteps steps={steps} />

@@ -16,7 +16,7 @@ Two paths through the product:
 | Path           | Input                                     | Executes code?                      | Models                                                     |
 | -------------- | ----------------------------------------- | ----------------------------------- | ---------------------------------------------------------- |
 | OptiLearn demo | Built-in demo repo with a known, real bug | Yes, inside the Docker sandbox only | Bob + Granite as independent investigators; sandbox verifies  |
-| General repos  | Public GitHub URL or uploaded zip         | **Never**                           | Granite scan; Bob + Granite diagnose and propose (unverified) |
+| General repos  | Public GitHub URL or uploaded zip         | Python projects with tests, under gVisor (`ARBITRARY_EXECUTION`, on since 2026-09-27); otherwise never | Granite scan; Bob + Granite diagnose and propose; verified only after a sandbox reproduction |
 
 ## Hard rules
 
