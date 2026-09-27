@@ -56,7 +56,11 @@ def general_prompt(issue: Issue, files: dict[str, str]) -> str:
         "relevant files are in your workspace and quoted here. Do not edit files or "
         "run commands.\n\n"
         f"Issue:\n{_issue_text(issue)}\n\nSource code:\n{format_sources(files)}\n\n"
-        f"Cite exact file:line evidence. {_JSON_REPLY} Each candidate fix is "
+        f"Cite exact file:line evidence. Reports can be wrong: if the code is actually "
+        "correct and the reported problem cannot happen, say so plainly in root_cause, "
+        "set confidence below 0.3 and return no fixes. Write root_cause as your final "
+        "conclusion in at most 4 sentences, without step-by-step deliberation. "
+        f"{_JSON_REPLY} Each candidate fix is "
         '{"approach": "one sentence", "patch": "a unified diff with ---/+++ headers"}. '
         "Propose at most 2 fixes."
     )

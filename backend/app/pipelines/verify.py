@@ -93,11 +93,42 @@ def recommend_verified(candidates: list[FixAttempt]) -> Recommendation | None:
     )
 
 
-def recommend_unverified(candidates: list[FixAttempt]) -> Recommendation | None:
-    """Reasoning mode: nothing ran, so prefer the smallest proposed patch and say so."""
+def recommend_unverified(
+    candidates: list[FixAttempt], *, suite_checked: bool = False
+) -> Recommendation | None:
+    """
+    Reasoning mode: the bug was not confirmed, so no patch is verified as a fix.
+    When the repository's own tests were run against each patch (suite_checked),
+    only patches that apply and break nothing are eligible; otherwise nothing
+    ran, so prefer the smallest proposed patch and say so.
+    """
     proposed = [c for c in candidates if c.patch]
     if not proposed:
         return None
+    if suite_checked:
+        safe = [
+            c for c in proposed if c.test_results and not c.test_results.regressions
+        ]
+        if not safe:
+            return None
+        safe.sort(key=lambda c: (_patch_size(c), c.candidate_id))
+        best = safe[0]
+        r = best.test_results
+        reason = (
+            f"{best.candidate_id} is the smallest proposed change that keeps the "
+            f"repository's own tests as they were ({r.passed}/{r.total} pass, no "
+            "regressions). Not verified as a fix: the bug was not confirmed by a failing "
+            "test, so review the patch before using it"
+        )
+        rejected = len(proposed) - len(safe)
+        if rejected:
+            reason += (
+                f"; {rejected} other patch{'es' if rejected != 1 else ''} broke existing "
+                "tests or did not apply"
+            )
+        return Recommendation(
+            candidate_id=best.candidate_id, reason=reason + ".", verified=False
+        )
     proposed.sort(key=lambda c: (_patch_size(c), c.candidate_id))
     best = proposed[0]
     return Recommendation(

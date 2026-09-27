@@ -132,6 +132,8 @@ export interface ReproAttempt {
   investigators: InvestigatorReport[];
   /** General repos run in the sandbox: the test that reproduced the bug. */
   reproducer_test: string | null;
+  /** A test of the correct behaviour passed on the original code: the bug may not exist. */
+  no_evidence: boolean;
 }
 
 export interface TestResults {

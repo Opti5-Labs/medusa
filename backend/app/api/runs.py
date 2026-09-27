@@ -176,6 +176,12 @@ def _patch_header(run, candidate) -> str:
             f"Verified in Medusa's sandbox: reproducer fixed, {r.passed}/{r.total} "
             "checks passed, no regressions."
         )
+    elif r is not None:
+        lines.append(
+            f"Checked against the repository's own tests in Medusa's sandbox: {r.passed}/"
+            f"{r.total} pass, no regressions. NOT verified as a fix: the bug was not "
+            "confirmed by a failing test. Review it before applying."
+        )
     else:
         lines.append(
             "NOT executed or tested: this patch was proposed by reading the code only. "
