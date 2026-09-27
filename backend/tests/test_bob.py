@@ -434,3 +434,13 @@ def test_limit_output_is_never_passed_off_as_an_answer():
 def test_without_text_field_damaged_json_still_fails():
     stdout = _result_line("## not json at all")
     assert bob.parse_answer(stdout, "", 0, _TextAnswer).status == "error"
+
+
+def test_damaged_reproducer_json_still_yields_the_test():
+    from app.agents.reproducer import ReproTest, code_from, validate
+
+    reply = '```json\n{"test_source": "from m import f\n\ndef test_f():\n    assert f("a") == 1\n", "explanation": "x"}\n```'
+    stdout = _result_line(reply)
+    answer = bob.parse_answer(stdout, "", 0, ReproTest, text_field="test_source")
+    assert answer.status == "ok"
+    assert validate(code_from(answer.data.test_source)) is None

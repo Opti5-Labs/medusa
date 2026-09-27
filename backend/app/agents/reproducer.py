@@ -9,6 +9,7 @@ whether it really does (app/pipelines/repro.py); nothing here trusts the model.
 """
 
 import ast
+import re
 from dataclasses import dataclass
 
 from pydantic import Field
@@ -45,6 +46,15 @@ _SYSTEM = (
     'Reply with ONLY one JSON object: {"test_source": "<the complete test file>", '
     '"explanation": "<one sentence>"}'
 )
+
+
+_FENCE = re.compile(r"```(?:python|py)?[ \t]*\n(.*?)```", re.DOTALL)
+
+
+def code_from(text: str) -> str:
+    """The test file itself, when a model wrapped it in a Markdown code fence."""
+    match = _FENCE.search(text)
+    return match.group(1) if match else text
 
 
 def validate(source: str) -> str | None:
@@ -104,8 +114,9 @@ async def write_reproducer(
     if granite.is_configured():
         try:
             reply = await granite.chat_json(_SYSTEM, user, ReproTest, max_tokens=1800)
-            if (problem := validate(reply.test_source)) is None:
-                return Draft(reply.test_source, "granite")
+            source = code_from(reply.test_source)
+            if (problem := validate(source)) is None:
+                return Draft(source, "granite")
             granite_reason = f"Granite's test was unusable: {problem}"
         except granite.GraniteError as exc:
             granite_reason = str(exc)
@@ -114,10 +125,15 @@ async def write_reproducer(
 
     # The source is already in the prompt; an empty workspace keeps Bob from
     # spending its turn limit re-reading the same files.
-    answer = await bob.ask(_SYSTEM + "\n\n" + user, {}, ReproTest)
+    # text_field: code inside a JSON string is easy to mis-escape, so a damaged
+    # wrapper still yields the test source.
+    answer = await bob.ask(
+        _SYSTEM + "\n\n" + user, {}, ReproTest, text_field="test_source"
+    )
     if answer.status == "ok" and isinstance(answer.data, ReproTest):
-        if (problem := validate(answer.data.test_source)) is None:
-            return Draft(answer.data.test_source, "bob")
+        source = code_from(answer.data.test_source)
+        if (problem := validate(source)) is None:
+            return Draft(source, "bob")
         return Draft(
             None, None, f"{granite_reason}. Bob's test was unusable: {problem}"
         )
