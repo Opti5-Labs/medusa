@@ -689,7 +689,8 @@
     gap: var(--sp-4);
   }
   .architecture-diagram {
-    overflow-x: auto;
+    position: relative;
+    overflow: hidden;
     padding: var(--sp-4);
     border: 1px solid var(--separator);
     border-radius: 14px;
@@ -700,6 +701,69 @@
     max-width: 100%;
     height: auto;
     margin: 0 auto;
+  }
+  .mermaid-view {
+    position: relative;
+  }
+  .diagram-toolbar {
+    position: absolute;
+    top: var(--sp-2);
+    right: var(--sp-2);
+    z-index: 2;
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--separator);
+    border-radius: 10px;
+    background: rgb(6 10 20 / 70%);
+    backdrop-filter: blur(6px);
+  }
+  .diagram-zoom-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--label-2);
+    cursor: pointer;
+  }
+  .diagram-zoom-btn:hover {
+    background: rgb(255 255 255 / 8%);
+    color: var(--label-1);
+  }
+  .diagram-zoom-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  .diagram-viewport {
+    position: relative;
+    height: 420px;
+    min-height: 220px;
+    overflow: hidden;
+    resize: vertical;
+    touch-action: none;
+    cursor: grab;
+    border-radius: 10px;
+  }
+  .diagram-viewport:active {
+    cursor: grabbing;
+  }
+  .diagram-stage {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  .mermaid-view .diagram-stage svg {
+    display: block;
+    max-width: none;
+    height: auto;
+    margin: 0;
   }
   .provenance {
     display: grid;

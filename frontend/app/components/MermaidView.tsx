@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Icon from "./Icon";
 
 interface Props {
   /** Server-generated, validated Mermaid source (see backend/app/architecture/mermaid.py). */
@@ -11,6 +12,10 @@ interface Props {
   /** Shown instead of the diagram if rendering fails (e.g. an unsupported browser). */
   fallback?: React.ReactNode;
 }
+
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 4;
+const ZOOM_STEP = 1.3;
 
 /**
  * Renders Mermaid source to an inline SVG, client-side only.
@@ -29,6 +34,60 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   const [ready, setReady] = useState(false);
   const mounted = useRef(false);
   const host = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const view = useRef({ scale: 1, x: 0, y: 0 });
+  const drag = useRef<{ pointerX: number; pointerY: number; startX: number; startY: number } | null>(null);
+
+  const applyTransform = useCallback(() => {
+    const el = stage.current;
+    if (!el) return;
+    const { scale, x, y } = view.current;
+    el.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }, []);
+
+  const zoomAt = useCallback(
+    (clientX: number, clientY: number, factor: number) => {
+      const { scale, x, y } = view.current;
+      const nextScale = Math.min(Math.max(scale * factor, MIN_SCALE), MAX_SCALE);
+      const ratio = nextScale / scale;
+      view.current = {
+        scale: nextScale,
+        x: clientX - (clientX - x) * ratio,
+        y: clientY - (clientY - y) * ratio,
+      };
+      applyTransform();
+    },
+    [applyTransform]
+  );
+
+  const zoomAtCenter = useCallback(
+    (factor: number) => {
+      const vp = viewport.current;
+      if (!vp) return;
+      zoomAt(vp.clientWidth / 2, vp.clientHeight / 2, factor);
+    },
+    [zoomAt]
+  );
+
+  const fitToView = useCallback(() => {
+    const vp = viewport.current;
+    const st = stage.current;
+    const svgEl = st?.querySelector("svg");
+    if (!vp || !st || !svgEl) return;
+    st.style.transform = "translate(0px, 0px) scale(1)";
+    const svgRect = svgEl.getBoundingClientRect();
+    const vw = vp.clientWidth;
+    const vh = vp.clientHeight;
+    if (svgRect.width === 0 || svgRect.height === 0 || vw === 0 || vh === 0) return;
+    const scale = Math.min(Math.max(Math.min(vw / svgRect.width, vh / svgRect.height), MIN_SCALE), MAX_SCALE);
+    view.current = {
+      scale,
+      x: (vw - svgRect.width * scale) / 2,
+      y: (vh - svgRect.height * scale) / 2,
+    };
+    applyTransform();
+  }, [applyTransform]);
 
   // Follow the selected app theme, including changes from another browser tab.
   useEffect(() => {
@@ -113,6 +172,51 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- themeTick intentionally forces a re-render
   }, [source, id, themeTick, ready]);
 
+  // Reset pan/zoom and fit the freshly rendered SVG into the viewport. Also
+  // binds a non-passive wheel listener: React's synthetic onWheel is passive
+  // by default, so preventDefault() there would not stop page scroll.
+  useEffect(() => {
+    if (!svg) return;
+    view.current = { scale: 1, x: 0, y: 0 };
+    const raf = requestAnimationFrame(fitToView);
+    const vp = viewport.current;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      if (!vp) return;
+      const rect = vp.getBoundingClientRect();
+      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      zoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
+    };
+    vp?.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => {
+      cancelAnimationFrame(raf);
+      vp?.removeEventListener("wheel", onWheelNative);
+    };
+  }, [svg, fitToView, zoomAt]);
+
+  function onPointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    drag.current = {
+      pointerX: e.clientX,
+      pointerY: e.clientY,
+      startX: view.current.x,
+      startY: view.current.y,
+    };
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!drag.current) return;
+    view.current.x = drag.current.startX + (e.clientX - drag.current.pointerX);
+    view.current.y = drag.current.startY + (e.clientY - drag.current.pointerY);
+    applyTransform();
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    drag.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  }
+
   if (!source) return null;
 
   if (failed) {
@@ -135,11 +239,34 @@ export default function MermaidView({ source, id, className, fallback }: Props) 
   }
 
   return (
-    <div
-      ref={host}
-      className={`mermaid-view ${className ?? ""}`}
-      // eslint-disable-next-line @typescript-eslint/naming-convention -- React API
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div ref={host} className={`mermaid-view ${className ?? ""}`}>
+      <div className="diagram-toolbar">
+        <button type="button" className="diagram-zoom-btn" onClick={() => zoomAtCenter(1 / ZOOM_STEP)} aria-label="Zoom out">
+          <Icon name="zoomOut" />
+        </button>
+        <button type="button" className="diagram-zoom-btn" onClick={fitToView} aria-label="Reset zoom to fit">
+          <Icon name="frame" />
+        </button>
+        <button type="button" className="diagram-zoom-btn" onClick={() => zoomAtCenter(ZOOM_STEP)} aria-label="Zoom in">
+          <Icon name="zoomIn" />
+        </button>
+      </div>
+      <div
+        ref={viewport}
+        className="diagram-viewport"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onDoubleClick={fitToView}
+      >
+        <div
+          ref={stage}
+          className="diagram-stage"
+          // eslint-disable-next-line @typescript-eslint/naming-convention -- React API
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      </div>
+    </div>
   );
 }

@@ -127,6 +127,9 @@
 .light .code-snippet-head, .light .ask-sheet-head {
   background: rgb(226 231 244 / 55%);
 }
+.light .diagram-toolbar {
+  background: rgb(255 255 255 / 70%);
+}
 .light .segmented > button[aria-checked="true"] {
   background: #fff;
   box-shadow: 0 1px 4px rgb(75 86 119 / 15%);
